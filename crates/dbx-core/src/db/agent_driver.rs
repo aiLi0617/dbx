@@ -31,6 +31,47 @@ pub struct AgentHandshake {
     pub capabilities: Vec<String>,
 }
 
+impl AgentHandshake {
+    pub fn supports(&self, capability: AgentCapability) -> bool {
+        self.capabilities.iter().any(|value| value == capability.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentCapability {
+    Connect,
+    TestConnection,
+    Metadata,
+    Query,
+    PagedQuery,
+    Transaction,
+    Ddl,
+}
+
+impl AgentCapability {
+    pub const ALL: [Self; 7] = [
+        Self::Connect,
+        Self::TestConnection,
+        Self::Metadata,
+        Self::Query,
+        Self::PagedQuery,
+        Self::Transaction,
+        Self::Ddl,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Connect => "connect",
+            Self::TestConnection => "test_connection",
+            Self::Metadata => "metadata",
+            Self::Query => "query",
+            Self::PagedQuery => "paged_query",
+            Self::Transaction => "transaction",
+            Self::Ddl => "ddl",
+        }
+    }
+}
+
 struct StderrTail {
     lines: VecDeque<String>,
     capacity: usize,
@@ -378,7 +419,8 @@ impl Drop for AgentDriverClient {
 mod tests {
     use super::{
         agent_handshake_params, agent_java_args, agent_proxy_env_vars, format_agent_process_error,
-        is_unsupported_handshake_error, read_agent_line, AgentHandshake, StderrTail, AGENT_PROTOCOL_VERSION,
+        is_unsupported_handshake_error, read_agent_line, AgentCapability, AgentHandshake, StderrTail,
+        AGENT_PROTOCOL_VERSION,
     };
     use std::io::Cursor;
 
@@ -471,6 +513,31 @@ mod tests {
         assert_eq!(handshake.protocol_version, 1);
         assert_eq!(handshake.agent_protocol_version, 1);
         assert_eq!(handshake.capabilities, vec!["connect", "query", "metadata"]);
+    }
+
+    #[test]
+    fn defines_agent_protocol_capabilities() {
+        assert_eq!(AgentCapability::Connect.as_str(), "connect");
+        assert_eq!(AgentCapability::TestConnection.as_str(), "test_connection");
+        assert_eq!(AgentCapability::Metadata.as_str(), "metadata");
+        assert_eq!(AgentCapability::Query.as_str(), "query");
+        assert_eq!(AgentCapability::PagedQuery.as_str(), "paged_query");
+        assert_eq!(AgentCapability::Transaction.as_str(), "transaction");
+        assert_eq!(AgentCapability::Ddl.as_str(), "ddl");
+        assert_eq!(AgentCapability::ALL.len(), 7);
+    }
+
+    #[test]
+    fn checks_handshake_capability_support() {
+        let handshake = AgentHandshake {
+            protocol_version: AGENT_PROTOCOL_VERSION,
+            agent_protocol_version: AGENT_PROTOCOL_VERSION,
+            capabilities: vec!["connect".to_string(), "metadata".to_string()],
+        };
+
+        assert!(handshake.supports(AgentCapability::Connect));
+        assert!(handshake.supports(AgentCapability::Metadata));
+        assert!(!handshake.supports(AgentCapability::Query));
     }
 
     #[test]
