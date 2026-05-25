@@ -122,6 +122,7 @@ fn pg_value_to_json(row: &Row, idx: usize, type_name: &str) -> serde_json::Value
 
 pub async fn connect(url: &str) -> Result<Pool, String> {
     validate_postgres_ssl_paths(url)?;
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let tz = iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".to_string());
 

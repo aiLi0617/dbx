@@ -236,13 +236,15 @@ pub async fn test_connection(state: State<'_, Arc<AppState>>, config: Connection
                 }
                 Err(e) => Err(e),
             },
-            DatabaseType::Postgres | DatabaseType::Redshift => match db::postgres::connect(&url).await {
-                Ok(pool) => {
-                    pool.close();
-                    Ok("Connection successful".to_string())
+            DatabaseType::Postgres | DatabaseType::Redshift | DatabaseType::Gaussdb | DatabaseType::OpenGauss => {
+                match db::postgres::connect(&url).await {
+                    Ok(pool) => {
+                        pool.close();
+                        Ok("Connection successful".to_string())
+                    }
+                    Err(e) => Err(e),
                 }
-                Err(e) => Err(e),
-            },
+            }
             DatabaseType::Sqlite => match db::sqlite::connect_path(&expand_tilde(&config.host)).await {
                 Ok(_) => Ok("Connection successful".to_string()),
                 Err(e) => Err(e),
@@ -344,7 +346,9 @@ pub async fn connect_db(state: State<'_, Arc<AppState>>, config: ConnectionConfi
         DatabaseType::Doris | DatabaseType::StarRocks => {
             PoolKind::Mysql(db::mysql::connect_bare(&url).await?, MysqlMode::Bare)
         }
-        DatabaseType::Postgres | DatabaseType::Redshift => PoolKind::Postgres(db::postgres::connect(&url).await?),
+        DatabaseType::Postgres | DatabaseType::Redshift | DatabaseType::Gaussdb | DatabaseType::OpenGauss => {
+            PoolKind::Postgres(db::postgres::connect(&url).await?)
+        }
         DatabaseType::Sqlite => PoolKind::Sqlite(db::sqlite::connect_path(&expand_tilde(&db_config.host)).await?),
         DatabaseType::Redis => {
             let con = db::redis_driver::connect(&url).await?;

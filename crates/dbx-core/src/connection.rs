@@ -190,7 +190,9 @@ impl AppState {
             DatabaseType::Doris | DatabaseType::StarRocks => {
                 PoolKind::Mysql(db::mysql::connect_bare(&url).await?, MysqlMode::Bare)
             }
-            DatabaseType::Postgres | DatabaseType::Redshift => PoolKind::Postgres(db::postgres::connect(&url).await?),
+            DatabaseType::Postgres | DatabaseType::Redshift | DatabaseType::Gaussdb | DatabaseType::OpenGauss => {
+                PoolKind::Postgres(db::postgres::connect(&url).await?)
+            }
             DatabaseType::Sqlite => PoolKind::Sqlite(db::sqlite::connect_path(&expand_tilde(&db_config.host)).await?),
             DatabaseType::Redis => {
                 let con = db::redis_driver::connect(&url).await?;
@@ -268,7 +270,6 @@ impl AppState {
             | DatabaseType::Vertica
             | DatabaseType::Firebird
             | DatabaseType::Exasol
-            | DatabaseType::OpenGauss
             | DatabaseType::OceanbaseOracle
             | DatabaseType::Gbase
             | DatabaseType::Oracle
@@ -284,8 +285,7 @@ impl AppState {
             | DatabaseType::Kylin
             | DatabaseType::Sundb
             | DatabaseType::Tdengine
-            | DatabaseType::Access
-            | DatabaseType::Gaussdb => {
+            | DatabaseType::Access => {
                 let connect_params =
                     agent_connect_params(&db_config, &host, port, db_config.effective_database().unwrap_or(""));
                 let mut client =
@@ -586,6 +586,8 @@ fn default_dbx_dir() -> PathBuf {
 }
 
 pub fn connection_url_for_endpoint(config: &ConnectionConfig, host: &str, port: u16) -> String {
+    let normalized = native_postgres_url_config(config);
+    let config = normalized.as_ref().unwrap_or(config);
     if host == config.host && port == config.port {
         config.connection_url()
     } else {
@@ -594,10 +596,33 @@ pub fn connection_url_for_endpoint(config: &ConnectionConfig, host: &str, port: 
 }
 
 pub fn redacted_connection_url_for_endpoint(config: &ConnectionConfig, host: &str, port: u16) -> String {
+    let normalized = native_postgres_url_config(config);
+    let config = normalized.as_ref().unwrap_or(config);
     if host == config.host && port == config.port {
         config.redacted_connection_url()
     } else {
         config.redacted_connection_url_with_host(host, port)
+    }
+}
+
+fn native_postgres_url_config(config: &ConnectionConfig) -> Option<ConnectionConfig> {
+    match config.db_type {
+        DatabaseType::Gaussdb | DatabaseType::OpenGauss => {
+            let mut normalized = config.clone();
+            if config.db_type == DatabaseType::Gaussdb {
+                let params = normalized.url_params.as_deref().unwrap_or("").trim().trim_start_matches('?');
+                if !params.to_lowercase().contains("sslmode=") {
+                    normalized.url_params = Some(if params.is_empty() {
+                        "sslmode=disable".to_string()
+                    } else {
+                        format!("sslmode=disable&{params}")
+                    });
+                }
+            }
+            normalized.db_type = DatabaseType::Postgres;
+            Some(normalized)
+        }
+        _ => None,
     }
 }
 
@@ -808,9 +833,10 @@ async fn detect_ob_oracle_mode(config: &ConnectionConfig, pool: &db::mysql::MySq
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_connect_params, database_connection_config, metadata_connection_config, uses_tcp_probe, AppState,
-        PoolKind,
+        agent_connect_params, connection_url_for_endpoint, database_connection_config, metadata_connection_config,
+        redacted_connection_url_for_endpoint, uses_tcp_probe, AppState, PoolKind,
     };
+    use crate::db;
     use crate::models::connection::{ConnectionConfig, DatabaseType, ProxyType};
     use crate::schema;
     use crate::storage::Storage;
@@ -1029,6 +1055,37 @@ mod tests {
         (AppState::new(storage), dir)
     }
 
+    fn live_postgres_like_config(
+        db_type: DatabaseType,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: &str,
+        url_params: Option<&str>,
+    ) -> ConnectionConfig {
+        let mut config = mysql_config(Some("postgres"));
+        config.db_type = db_type;
+        config.host = host.to_string();
+        config.port = port;
+        config.username = username.to_string();
+        config.password = password.to_string();
+        config.url_params = url_params.map(str::to_string);
+        config
+    }
+
+    async fn assert_live_postgres_like_query(config: ConnectionConfig) {
+        let url = connection_url_for_endpoint(&config, &config.host, config.port);
+        let pool = db::postgres::connect(&url).await.unwrap_or_else(|err| {
+            panic!("failed to connect to {:?} at {}:{}: {}", config.db_type, config.host, config.port, err)
+        });
+        let result =
+            db::postgres::execute_query(&pool, "SELECT current_database(), current_schema()").await.unwrap_or_else(
+                |err| panic!("failed to query {:?} at {}:{}: {}", config.db_type, config.host, config.port, err),
+            );
+        assert_eq!(result.rows.len(), 1);
+        pool.close();
+    }
+
     #[test]
     fn mysql_metadata_connection_ignores_saved_default_database() {
         let config = mysql_config(Some("app"));
@@ -1056,6 +1113,64 @@ mod tests {
         let scoped = database_connection_config(&config, Some("analytics"));
 
         assert_eq!(scoped.database.as_deref(), Some("analytics"));
+    }
+
+    #[test]
+    fn gaussdb_endpoint_url_uses_postgres_scheme_for_native_driver() {
+        let mut config = mysql_config(Some("postgres"));
+        config.db_type = DatabaseType::Gaussdb;
+        config.username = "gaussdb".to_string();
+        config.password = "secret".to_string();
+
+        assert_eq!(
+            connection_url_for_endpoint(&config, &config.host, config.port),
+            "postgres://gaussdb:secret@127.0.0.1:3306/postgres?sslmode=disable"
+        );
+        assert_eq!(
+            redacted_connection_url_for_endpoint(&config, &config.host, config.port),
+            "postgres://127.0.0.1:3306/postgres?sslmode=disable"
+        );
+    }
+
+    #[test]
+    fn opengauss_endpoint_url_uses_postgres_scheme_for_native_driver() {
+        let mut config = mysql_config(Some("postgres"));
+        config.db_type = DatabaseType::OpenGauss;
+        config.username = "gaussdb".to_string();
+        config.password = "secret".to_string();
+
+        assert_eq!(
+            connection_url_for_endpoint(&config, &config.host, config.port),
+            "postgres://gaussdb:secret@127.0.0.1:3306/postgres"
+        );
+    }
+
+    #[test]
+    fn gaussdb_endpoint_url_keeps_explicit_sslmode() {
+        let mut config = mysql_config(Some("postgres"));
+        config.db_type = DatabaseType::Gaussdb;
+        config.username = "gaussdb".to_string();
+        config.password = "secret".to_string();
+        config.url_params = Some("sslmode=require&application_name=dbx".to_string());
+
+        assert_eq!(
+            connection_url_for_endpoint(&config, &config.host, config.port),
+            "postgres://gaussdb:secret@127.0.0.1:3306/postgres?sslmode=require&application_name=dbx"
+        );
+    }
+
+    #[test]
+    fn gaussdb_endpoint_url_prepends_default_sslmode_to_custom_params() {
+        let mut config = mysql_config(Some("postgres"));
+        config.db_type = DatabaseType::Gaussdb;
+        config.username = "gaussdb".to_string();
+        config.password = "secret".to_string();
+        config.url_params = Some("application_name=dbx".to_string());
+
+        assert_eq!(
+            connection_url_for_endpoint(&config, &config.host, config.port),
+            "postgres://gaussdb:secret@127.0.0.1:3306/postgres?sslmode=disable&application_name=dbx"
+        );
     }
 
     #[test]
@@ -1192,5 +1307,51 @@ mod tests {
         assert_ne!(port, config.port);
         state.proxy_tunnels.stop_tunnel("proxied").await;
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a reachable GaussDB instance via environment variables"]
+    async fn live_gaussdb_native_connection_succeeds() {
+        let host = std::env::var("DBX_TEST_GAUSSDB_HOST").expect("DBX_TEST_GAUSSDB_HOST not set");
+        let port = std::env::var("DBX_TEST_GAUSSDB_PORT")
+            .expect("DBX_TEST_GAUSSDB_PORT not set")
+            .parse::<u16>()
+            .expect("DBX_TEST_GAUSSDB_PORT should be a u16");
+        let username = std::env::var("DBX_TEST_GAUSSDB_USER").expect("DBX_TEST_GAUSSDB_USER not set");
+        let password = std::env::var("DBX_TEST_GAUSSDB_PASSWORD").expect("DBX_TEST_GAUSSDB_PASSWORD not set");
+        let url_params = std::env::var("DBX_TEST_GAUSSDB_URL_PARAMS").ok();
+
+        assert_live_postgres_like_query(live_postgres_like_config(
+            DatabaseType::Gaussdb,
+            &host,
+            port,
+            &username,
+            &password,
+            url_params.as_deref(),
+        ))
+        .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a reachable openGauss instance via environment variables"]
+    async fn live_opengauss_native_connection_succeeds() {
+        let host = std::env::var("DBX_TEST_OPENGAUSS_HOST").expect("DBX_TEST_OPENGAUSS_HOST not set");
+        let port = std::env::var("DBX_TEST_OPENGAUSS_PORT")
+            .expect("DBX_TEST_OPENGAUSS_PORT not set")
+            .parse::<u16>()
+            .expect("DBX_TEST_OPENGAUSS_PORT should be a u16");
+        let username = std::env::var("DBX_TEST_OPENGAUSS_USER").expect("DBX_TEST_OPENGAUSS_USER not set");
+        let password = std::env::var("DBX_TEST_OPENGAUSS_PASSWORD").expect("DBX_TEST_OPENGAUSS_PASSWORD not set");
+        let url_params = std::env::var("DBX_TEST_OPENGAUSS_URL_PARAMS").ok();
+
+        assert_live_postgres_like_query(live_postgres_like_config(
+            DatabaseType::OpenGauss,
+            &host,
+            port,
+            &username,
+            &password,
+            url_params.as_deref(),
+        ))
+        .await;
     }
 }

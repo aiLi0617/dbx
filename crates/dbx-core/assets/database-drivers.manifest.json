@@ -192,12 +192,11 @@
     {
       "dbType": "gaussdb",
       "label": "GaussDB",
-      "runtimeMode": "agent",
-      "mcpMode": "bridge",
-      "agentKey": "gaussdb",
+      "runtimeMode": "native",
+      "mcpMode": "direct",
       "singleConnectionPool": false,
       "metadataConnectionScoped": false,
-      "skipTcpProbe": true,
+      "skipTcpProbe": false,
       "defaultPort": 8000
     },
     {
@@ -280,12 +279,11 @@
     {
       "dbType": "opengauss",
       "label": "openGauss",
-      "runtimeMode": "agent",
-      "mcpMode": "bridge",
-      "agentKey": "opengauss",
+      "runtimeMode": "native",
+      "mcpMode": "direct",
       "singleConnectionPool": false,
       "metadataConnectionScoped": false,
-      "skipTcpProbe": true,
+      "skipTcpProbe": false,
       "defaultPort": 5432
     },
     {

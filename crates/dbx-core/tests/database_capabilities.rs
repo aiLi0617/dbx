@@ -49,7 +49,6 @@ fn driver_manifest() -> DriverManifest {
 fn maps_agent_database_types_to_driver_keys() {
     assert_eq!(agent_key(&DatabaseType::Trino, None), Some("trino"));
     assert_eq!(agent_key(&DatabaseType::Hive, None), Some("hive"));
-    assert_eq!(agent_key(&DatabaseType::Gaussdb, None), Some("gaussdb"));
     assert_eq!(agent_key(&DatabaseType::Tdengine, None), Some("tdengine"));
     assert_eq!(agent_key(&DatabaseType::Yashandb, None), Some("yashandb"));
     assert_eq!(agent_key(&DatabaseType::Databricks, None), Some("databricks"));
@@ -58,7 +57,6 @@ fn maps_agent_database_types_to_driver_keys() {
     assert_eq!(agent_key(&DatabaseType::Vertica, None), Some("vertica"));
     assert_eq!(agent_key(&DatabaseType::Firebird, None), Some("firebird"));
     assert_eq!(agent_key(&DatabaseType::Exasol, None), Some("exasol"));
-    assert_eq!(agent_key(&DatabaseType::OpenGauss, None), Some("opengauss"));
     assert_eq!(agent_key(&DatabaseType::OceanbaseOracle, None), Some("oceanbase-oracle"));
     assert_eq!(agent_key(&DatabaseType::Gbase, None), Some("gbase"));
     assert_eq!(agent_key(&DatabaseType::Access, None), Some("access"));
@@ -80,12 +78,13 @@ fn classifies_agent_database_types() {
     assert!(is_agent_type(&DatabaseType::Vertica));
     assert!(is_agent_type(&DatabaseType::Firebird));
     assert!(is_agent_type(&DatabaseType::Exasol));
-    assert!(is_agent_type(&DatabaseType::OpenGauss));
     assert!(is_agent_type(&DatabaseType::OceanbaseOracle));
     assert!(is_agent_type(&DatabaseType::Gbase));
     assert!(is_agent_type(&DatabaseType::Access));
     assert!(!is_agent_type(&DatabaseType::Mysql));
     assert!(!is_agent_type(&DatabaseType::Jdbc));
+    assert!(!is_agent_type(&DatabaseType::Gaussdb));
+    assert!(!is_agent_type(&DatabaseType::OpenGauss));
 }
 
 #[test]
@@ -128,6 +127,8 @@ fn skips_tcp_probe_for_local_file_plugin_and_agent_types() {
     assert!(skips_tcp_probe(&DatabaseType::Gbase));
     assert!(!skips_tcp_probe(&DatabaseType::Postgres));
     assert!(!skips_tcp_probe(&DatabaseType::Mysql));
+    assert!(!skips_tcp_probe(&DatabaseType::Gaussdb));
+    assert!(!skips_tcp_probe(&DatabaseType::OpenGauss));
 }
 
 #[test]

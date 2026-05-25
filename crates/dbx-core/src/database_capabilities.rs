@@ -14,7 +14,6 @@ pub fn agent_key(db_type: &DatabaseType, driver_profile: Option<&str>) -> Option
         DatabaseType::Vertica => Some("vertica"),
         DatabaseType::Firebird => Some("firebird"),
         DatabaseType::Exasol => Some("exasol"),
-        DatabaseType::OpenGauss => Some("opengauss"),
         DatabaseType::OceanbaseOracle => Some("oceanbase-oracle"),
         DatabaseType::Gbase => Some("gbase"),
         DatabaseType::Oracle => match driver_profile {
@@ -32,7 +31,6 @@ pub fn agent_key(db_type: &DatabaseType, driver_profile: Option<&str>) -> Option
         DatabaseType::Bigquery => Some("bigquery"),
         DatabaseType::Kylin => Some("kylin"),
         DatabaseType::Sundb => Some("sundb"),
-        DatabaseType::Gaussdb => Some("gaussdb"),
         DatabaseType::MongoDb => Some("mongodb"),
         DatabaseType::Tdengine => Some("tdengine"),
         DatabaseType::Access => Some("access"),
