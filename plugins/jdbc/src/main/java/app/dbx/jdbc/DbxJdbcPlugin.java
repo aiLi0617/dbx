@@ -44,7 +44,8 @@ public final class DbxJdbcPlugin {
     private static final JdbcDriverQuirks ORACLE_QUIRKS = new JdbcDriverQuirks(false, true);
     private static final List<JdbcDriverQuirkRule> DRIVER_QUIRK_RULES = List.of(
         new JdbcDriverQuirkRule("jdbc:yasdb:", YASHAN_QUIRKS),
-        new JdbcDriverQuirkRule("jdbc:oracle:", ORACLE_QUIRKS)
+        new JdbcDriverQuirkRule("jdbc:oracle:", ORACLE_QUIRKS),
+        new JdbcDriverQuirkRule("jdbc:dm:", ORACLE_QUIRKS)
     );
     private static String registeredDriverKey = "";
     private static String sharedConnectionKey = "";
