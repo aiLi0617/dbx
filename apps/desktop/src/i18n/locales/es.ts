@@ -492,6 +492,8 @@ export default {
     transpose: "Transponer fila",
     rowsPerPageShort: " filas",
     columnDetails: "Detalles de columna",
+    tableInfoSearch: "Buscar...",
+    tableInfoNoResults: "Sin resultados",
     queryError: "Error de consulta",
     refresh: "Actualizar",
     commit: "Confirmar",

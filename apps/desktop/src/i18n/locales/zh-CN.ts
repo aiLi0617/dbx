@@ -528,6 +528,8 @@ export default {
     tableInfoTriggers: "触发器",
     tableInfoNullable: "可空",
     tableInfoEmpty: "暂无元数据",
+    tableInfoSearch: "搜索...",
+    tableInfoNoResults: "无匹配结果",
     queryError: "查询出错",
     refresh: "刷新",
     commit: "提交",

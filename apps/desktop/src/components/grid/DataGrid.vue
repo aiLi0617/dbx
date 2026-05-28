@@ -3271,6 +3271,11 @@ const triggers = ref<TriggerInfo[]>([]);
 const triggersLoaded = ref(false);
 const triggersLoading = ref(false);
 const triggersError = ref("");
+const searchQuery = ref("");
+
+watch(activeTableInfoTab, () => {
+  searchQuery.value = "";
+});
 
 const ddlDrawerStyle = computed(() => ({
   width: `${ddlWidth.value}px`,
@@ -3537,7 +3542,52 @@ onUnmounted(() => {
   clearInterval(_loadingTimer);
 });
 
-const highlightedDdlContent = computed(() => highlight(ddlContent.value));
+const filteredColumns = computed(() => {
+  if (!searchQuery.value) return props.tableMeta?.columns ?? [];
+  const q = searchQuery.value.toLowerCase();
+  return (props.tableMeta?.columns ?? []).filter(
+    (c) => c.name.toLowerCase().includes(q) || c.data_type.toLowerCase().includes(q),
+  );
+});
+
+const filteredIndexes = computed(() => {
+  if (!searchQuery.value) return indexes.value;
+  const q = searchQuery.value.toLowerCase();
+  return indexes.value.filter(
+    (i) => i.name.toLowerCase().includes(q) || i.columns.some((c) => c.toLowerCase().includes(q)),
+  );
+});
+
+const filteredForeignKeys = computed(() => {
+  if (!searchQuery.value) return foreignKeys.value;
+  const q = searchQuery.value.toLowerCase();
+  return foreignKeys.value.filter(
+    (fk) =>
+      fk.name.toLowerCase().includes(q) ||
+      fk.column.toLowerCase().includes(q) ||
+      fk.ref_table.toLowerCase().includes(q) ||
+      fk.ref_column.toLowerCase().includes(q),
+  );
+});
+
+const filteredTriggers = computed(() => {
+  if (!searchQuery.value) return triggers.value;
+  const q = searchQuery.value.toLowerCase();
+  return triggers.value.filter((t) => t.name.toLowerCase().includes(q));
+});
+
+const filteredDdlContent = computed(() => {
+  if (!ddlContent.value) return "";
+  const html = highlight(ddlContent.value);
+  if (!searchQuery.value) return html;
+
+  const escaped = searchQuery.value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(`(${escaped})`, "gi");
+  // Match only text between > and < (text nodes), then replace the search term within those spans
+  return html.replace(/>([^<]*)</g, (_, text) => {
+    return `>${text.replace(regex, "<mark>$1</mark>")}<`;
+  });
+});
 
 defineExpose({
   useTransaction,
@@ -4937,8 +4987,33 @@ defineExpose({
                 </button>
               </div>
 
+              <div class="px-2 py-1.5 border-b shrink-0 bg-background">
+                <div class="relative">
+                  <Search class="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                  <input
+                    v-model="searchQuery"
+                    :placeholder="t('grid.tableInfoSearch')"
+                    class="w-full h-7 pl-7 pr-6 text-xs bg-muted/50 rounded border border-border focus:outline-none focus:border-primary/50"
+                    @keydown.escape="searchQuery = ''"
+                  />
+                  <button
+                    v-if="searchQuery"
+                    class="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    @click="searchQuery = ''"
+                  >
+                    <X class="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
+
               <div v-if="activeTableInfoTab === 'columns'" class="flex-1 min-h-0 overflow-auto">
-                <table class="w-full text-xs">
+                <div
+                  v-if="searchQuery && filteredColumns.length === 0"
+                  class="p-6 text-center text-xs text-muted-foreground"
+                >
+                  {{ t("grid.tableInfoNoResults") }}
+                </div>
+                <table v-else class="w-full text-xs">
                   <thead class="sticky top-0 bg-muted/80 backdrop-blur text-muted-foreground">
                     <tr class="border-b">
                       <th class="text-left font-medium px-3 py-2">{{ t("grid.columnName") }}</th>
@@ -4948,7 +5023,7 @@ defineExpose({
                   </thead>
                   <tbody>
                     <tr
-                      v-for="column in tableMeta?.columns"
+                      v-for="column in filteredColumns"
                       :key="column.name"
                       class="border-b cursor-pointer hover:bg-muted/30"
                       role="button"
@@ -4979,11 +5054,17 @@ defineExpose({
                   <Loader2 class="w-4 h-4 animate-spin text-muted-foreground" />
                 </div>
                 <div v-else-if="indexesError" class="p-3 text-xs text-destructive">{{ indexesError }}</div>
+                <div
+                  v-else-if="searchQuery && filteredIndexes.length === 0"
+                  class="p-6 text-center text-xs text-muted-foreground"
+                >
+                  {{ t("grid.tableInfoNoResults") }}
+                </div>
                 <div v-else-if="indexes.length === 0" class="p-6 text-center text-xs text-muted-foreground">
                   {{ t("grid.tableInfoEmpty") }}
                 </div>
                 <div v-else class="divide-y">
-                  <div v-for="index in indexes" :key="index.name" class="p-3 text-xs">
+                  <div v-for="index in filteredIndexes" :key="index.name" class="p-3 text-xs">
                     <div class="font-medium truncate">{{ index.name }}</div>
                     <div class="mt-1 flex flex-wrap gap-1">
                       <span v-if="index.is_primary" class="rounded bg-amber-500/10 px-1.5 py-0.5 text-amber-600"
@@ -5008,11 +5089,17 @@ defineExpose({
                   <Loader2 class="w-4 h-4 animate-spin text-muted-foreground" />
                 </div>
                 <div v-else-if="foreignKeysError" class="p-3 text-xs text-destructive">{{ foreignKeysError }}</div>
+                <div
+                  v-else-if="searchQuery && filteredForeignKeys.length === 0"
+                  class="p-6 text-center text-xs text-muted-foreground"
+                >
+                  {{ t("grid.tableInfoNoResults") }}
+                </div>
                 <div v-else-if="foreignKeys.length === 0" class="p-6 text-center text-xs text-muted-foreground">
                   {{ t("grid.tableInfoEmpty") }}
                 </div>
                 <div v-else class="divide-y">
-                  <div v-for="fk in foreignKeys" :key="`${fk.name}:${fk.column}`" class="p-3 text-xs">
+                  <div v-for="fk in filteredForeignKeys" :key="`${fk.name}:${fk.column}`" class="p-3 text-xs">
                     <div class="font-medium truncate">{{ fk.name }}</div>
                     <div class="mt-1 font-mono text-[11px] text-muted-foreground break-all">
                       {{ fk.column }} -> {{ fk.ref_table }}.{{ fk.ref_column }}
@@ -5026,11 +5113,17 @@ defineExpose({
                   <Loader2 class="w-4 h-4 animate-spin text-muted-foreground" />
                 </div>
                 <div v-else-if="triggersError" class="p-3 text-xs text-destructive">{{ triggersError }}</div>
+                <div
+                  v-else-if="searchQuery && filteredTriggers.length === 0"
+                  class="p-6 text-center text-xs text-muted-foreground"
+                >
+                  {{ t("grid.tableInfoNoResults") }}
+                </div>
                 <div v-else-if="triggers.length === 0" class="p-6 text-center text-xs text-muted-foreground">
                   {{ t("grid.tableInfoEmpty") }}
                 </div>
                 <div v-else class="divide-y">
-                  <div v-for="trigger in triggers" :key="trigger.name" class="p-3 text-xs">
+                  <div v-for="trigger in filteredTriggers" :key="trigger.name" class="p-3 text-xs">
                     <div class="font-medium truncate">{{ trigger.name }}</div>
                     <div class="mt-1 text-[11px] text-muted-foreground">{{ trigger.timing }} {{ trigger.event }}</div>
                   </div>
@@ -5041,7 +5134,7 @@ defineExpose({
                 v-else-if="activeTableInfoTab === 'ddl' && !ddlLoading"
                 class="flex-1 min-w-0 text-xs font-mono p-3 overflow-auto ddl-code leading-5 select-text"
                 :class="ddlWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'"
-                v-html="highlightedDdlContent"
+                v-html="filteredDdlContent"
               ></pre>
               <div v-else class="flex-1 flex items-center justify-center">
                 <Loader2 class="w-4 h-4 animate-spin text-muted-foreground" />

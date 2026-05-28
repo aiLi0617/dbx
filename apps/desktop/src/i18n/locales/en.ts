@@ -533,6 +533,8 @@ export default {
     tableInfoTriggers: "Triggers",
     tableInfoNullable: "Nullable",
     tableInfoEmpty: "No metadata",
+    tableInfoSearch: "Search...",
+    tableInfoNoResults: "No results",
     queryError: "Query Error",
     refresh: "Refresh",
     commit: "Commit",
