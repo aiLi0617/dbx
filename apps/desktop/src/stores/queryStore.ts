@@ -665,6 +665,7 @@ export const useQueryStore = defineStore("query", () => {
       resultSortedSql?: string | undefined;
       pagination?: { limit: number; offset: number; sessionId?: string };
       mongoSafety?: MongoAggregateSafetyOptions;
+      preserveResultDuringExecution?: boolean;
     },
   ) {
     const tab = tabs.value.find((t) => t.id === id);
@@ -680,7 +681,9 @@ export const useQueryStore = defineStore("query", () => {
     tab.lastExecutedSql = sql;
     tab.resultTotalRowCount = undefined;
     const previousResultSessionClose = closeResultSession(tab, options?.pagination?.sessionId);
-    clearResultPayload(tab);
+    if (!options?.preserveResultDuringExecution || !tab.result) {
+      clearResultPayload(tab);
+    }
     console.info("[DBX][executeTabSql:start]", {
       traceId,
       tabId: id,

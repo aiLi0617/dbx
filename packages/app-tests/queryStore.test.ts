@@ -496,6 +496,66 @@ test("starting a new query clears the previous result payload immediately", asyn
   }
 });
 
+test("grid refreshes can preserve the previous result while loading", async () => {
+  const restoreStorage = installMemoryStorage();
+  setActivePinia(createPinia());
+  const connectionStore = useConnectionStore();
+  const store = useQueryStore();
+  const originalFetch = globalThis.fetch;
+
+  connectionStore.addEphemeralConnection(conn("conn-1"));
+  const tabId = store.createTab("conn-1", "db", "Query");
+  const tab = store.tabs.find((item) => item.id === tabId);
+  assert.ok(tab);
+  const previousResult: QueryResult = {
+    columns: ["id", "name"],
+    rows: [[1, "Ada"]],
+    affected_rows: 0,
+    execution_time_ms: 1,
+  };
+  tab.result = previousResult;
+
+  globalThis.fetch = (async (input) => {
+    const url = String(input);
+    if (url === "/api/query/prepare-pagination-plan") {
+      return new Response(JSON.stringify({ sqlToExecute: "select 1 order by name", useAgentResultSession: false }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url === "/api/query/execute-multi") {
+      return new Response(
+        JSON.stringify([{ columns: ["id", "name"], rows: [[2, "Grace"]], affected_rows: 0, execution_time_ms: 1 }]),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+    if (url === "/api/query/analyze-editability") {
+      return new Response(JSON.stringify({ editable: false, reason: "complex-source" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response("unexpected request", { status: 500 });
+  }) as typeof fetch;
+
+  try {
+    const execution = store.executeTabSql(tabId, "select 1 order by name", {
+      preserveResultDuringExecution: true,
+    });
+    assert.deepEqual(tab.result?.columns, previousResult.columns);
+    assert.deepEqual(tab.result?.rows, previousResult.rows);
+    assert.equal(tab.isExecuting, true);
+    await execution;
+    assert.deepEqual(tab.result?.rows, [[2, "Grace"]]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreStorage();
+  }
+});
+
 test("data tab execution preserves pagination offset metadata", async () => {
   const restoreStorage = installMemoryStorage();
   setActivePinia(createPinia());
