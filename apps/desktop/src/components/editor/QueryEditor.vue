@@ -939,6 +939,7 @@ async function provideSqlCompletions(
         translations: completionTranslations.value,
         snippets: settingsStore.editorSettings.snippets,
         dialect: props.dialect,
+        databaseType: props.databaseType,
       });
       return buildCompletionResult(
         items,
@@ -965,6 +966,7 @@ async function provideSqlCompletions(
         translations: completionTranslations.value,
         snippets: settingsStore.editorSettings.snippets,
         dialect: props.dialect,
+        databaseType: props.databaseType,
       });
       return buildCompletionResult(
         items,
@@ -1231,6 +1233,7 @@ async function performAsyncCompletionWithResult(
     translations: completionTranslations.value,
     snippets: settingsStore.editorSettings.snippets,
     dialect: props.dialect,
+    databaseType: props.databaseType,
   });
 
   return buildCompletionResult(

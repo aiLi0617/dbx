@@ -1,4 +1,4 @@
-import type { SqlSnippet } from "@/types/database";
+import type { DatabaseType, SqlSnippet } from "@/types/database";
 
 const SQL_KEYWORDS = [
   "SELECT",
@@ -259,6 +259,201 @@ const SQL_KEYWORDS = [
   "CRC32",
 ];
 
+const COMMON_SQL_KEYWORDS = [
+  "SELECT",
+  "FROM",
+  "WHERE",
+  "JOIN",
+  "LEFT",
+  "RIGHT",
+  "INNER",
+  "OUTER",
+  "ON",
+  "GROUP BY",
+  "ORDER BY",
+  "ASC",
+  "DESC",
+  "HAVING",
+  "LIMIT",
+  "OFFSET",
+  "INSERT",
+  "INTO",
+  "VALUES",
+  "UPDATE",
+  "SET",
+  "DELETE",
+  "CREATE",
+  "TABLE",
+  "VIEW",
+  "AS",
+  "AND",
+  "OR",
+  "NOT",
+  "IN",
+  "IS",
+  "NULL",
+  "LIKE",
+  "DISTINCT",
+  "UNION",
+  "ALL",
+  "EXISTS",
+  "BETWEEN",
+  "CASE",
+  "WHEN",
+  "THEN",
+  "ELSE",
+  "END",
+  "COUNT",
+  "SUM",
+  "AVG",
+  "MIN",
+  "MAX",
+  "COALESCE",
+  "CAST",
+  "ALTER",
+  "DROP",
+  "ADD",
+  "COLUMN",
+  "INDEX",
+  "PRIMARY",
+  "KEY",
+  "FOREIGN",
+  "REFERENCES",
+  "CONSTRAINT",
+  "DEFAULT",
+  "CHECK",
+  "UNIQUE",
+  "BEGIN",
+  "COMMIT",
+  "ROLLBACK",
+  "TRUNCATE",
+  "EXPLAIN",
+  "ANALYZE",
+  "WITH",
+  "RECURSIVE",
+  "OVER",
+  "PARTITION BY",
+  "ROW_NUMBER",
+  "RANK",
+  "DENSE_RANK",
+  "LAG",
+  "LEAD",
+  "FIRST_VALUE",
+  "LAST_VALUE",
+  "NTILE",
+  "BIGINT",
+  "BINARY",
+  "BIT",
+  "CHAR",
+  "DATE",
+  "DECIMAL",
+  "FLOAT",
+  "INT",
+  "NUMERIC",
+  "REAL",
+  "SMALLINT",
+  "TEXT",
+  "TIME",
+  "TIMESTAMP",
+  "VARCHAR",
+];
+
+const POSTGRES_SQL_KEYWORDS = [
+  "BIGSERIAL",
+  "JSON",
+  "JSONB",
+  "SMALLSERIAL",
+  "SERIAL",
+  "UUID",
+  "INET",
+  "CIDR",
+  "MACADDR",
+  "MACADDR8",
+  "TSVECTOR",
+  "TSQUERY",
+  "BYTEA",
+  "BOOLEAN",
+  "RETURNING",
+  "ILIKE",
+  "SIMILAR TO",
+  "ON CONFLICT",
+  "DO NOTHING",
+  "DO UPDATE",
+  "GENERATED",
+  "IDENTITY",
+  "MATERIALIZED",
+  "VACUUM",
+  "ARRAY_AGG",
+  "JSONB_BUILD_OBJECT",
+  "JSONB_AGG",
+  "TO_JSONB",
+  "CURRENT_TIMESTAMP",
+];
+
+const MYSQL_SQL_KEYWORDS = [
+  "AUTO_INCREMENT",
+  "UNSIGNED",
+  "ZEROFILL",
+  "ENGINE",
+  "CHARSET",
+  "COLLATE",
+  "ENUM",
+  "JSON",
+  "BOOL",
+  "BOOLEAN",
+  "TINYTEXT",
+  "MEDIUMTEXT",
+  "LONGTEXT",
+  "TINYBLOB",
+  "MEDIUMBLOB",
+  "LONGBLOB",
+  "SHOW",
+  "DESCRIBE",
+  "REPLACE",
+  "DUPLICATE KEY",
+  "JSON_EXTRACT",
+  "JSON_UNQUOTE",
+  "DATE_FORMAT",
+];
+
+const SQLITE_SQL_KEYWORDS = [
+  "AUTOINCREMENT",
+  "INTEGER",
+  "BLOB",
+  "BOOLEAN",
+  "WITHOUT ROWID",
+  "VACUUM",
+  "PRAGMA",
+  "JSON_EXTRACT",
+  "JSON_SET",
+  "STRFTIME",
+];
+
+const SQLSERVER_SQL_KEYWORDS = [
+  "TOP",
+  "IDENTITY",
+  "UNIQUEIDENTIFIER",
+  "NVARCHAR",
+  "DATETIME2",
+  "DATETIMEOFFSET",
+  "BIT",
+  "GO",
+  "MERGE",
+  "OUTPUT",
+  "TRY_CAST",
+  "TRY_CONVERT",
+  "OPENJSON",
+  "JSON_VALUE",
+  "JSON_QUERY",
+];
+
+const DATABASE_SQL_KEYWORDS: Partial<Record<DatabaseType, string[]>> = {
+  mysql: MYSQL_SQL_KEYWORDS,
+  postgres: POSTGRES_SQL_KEYWORDS,
+  sqlite: SQLITE_SQL_KEYWORDS,
+  sqlserver: SQLSERVER_SQL_KEYWORDS,
+};
+
 // Keywords that appear in nearly every SQL query — boosted so frequency beats length tie-breaking.
 // E.g. typing "WH" should rank WHERE (high frequency) above WHEN (CASE-only).
 const HIGH_FREQUENCY_KEYWORDS = new Set([
@@ -373,6 +568,28 @@ const DATA_TYPE_KEYWORDS = new Set([
   "VARBINARY",
   "VARCHAR",
   "XML",
+  "JSON",
+  "JSONB",
+  "UUID",
+  "SERIAL",
+  "BIGSERIAL",
+  "SMALLSERIAL",
+  "BYTEA",
+  "BOOLEAN",
+  "BOOL",
+  "INET",
+  "CIDR",
+  "MACADDR",
+  "MACADDR8",
+  "TSVECTOR",
+  "TSQUERY",
+  "ENUM",
+  "TINYTEXT",
+  "MEDIUMTEXT",
+  "LONGTEXT",
+  "TINYBLOB",
+  "MEDIUMBLOB",
+  "LONGBLOB",
 ]);
 
 // Window functions that should use OVER() completion
@@ -594,6 +811,80 @@ const SQL_FUNCTION_SIGNATURES = new Map<string, string[]>([
   ["JSON_OBJECTAGG", ["key", "value"]],
 ]);
 
+const POSTGRES_FUNCTION_SIGNATURES = new Map<string, string[]>([
+  ["JSONB_BUILD_OBJECT", ["key", "value", "...pairs"]],
+  ["JSONB_AGG", ["expression"]],
+  ["TO_JSONB", ["value"]],
+  ["JSONB_SET", ["target", "path", "new_value"]],
+  ["ARRAY_AGG", ["expression"]],
+  ["STRING_AGG", ["expression", "delimiter"]],
+  ["GEN_RANDOM_UUID", []],
+]);
+
+const MYSQL_FUNCTION_SIGNATURES = new Map<string, string[]>([
+  ["DATE_FORMAT", ["date", "format"]],
+  ["JSON_EXTRACT", ["json", "path"]],
+  ["JSON_UNQUOTE", ["json"]],
+  ["GROUP_CONCAT", ["expression"]],
+  ["UUID", []],
+]);
+
+const SQLITE_FUNCTION_SIGNATURES = new Map<string, string[]>([
+  ["JSON_EXTRACT", ["json", "path"]],
+  ["JSON_SET", ["json", "path", "value"]],
+  ["STRFTIME", ["format", "time"]],
+  ["IFNULL", ["expression", "fallback"]],
+]);
+
+const SQLSERVER_FUNCTION_SIGNATURES = new Map<string, string[]>([
+  ["TRY_CAST", ["expression AS type"]],
+  ["TRY_CONVERT", ["type", "expression"]],
+  ["JSON_VALUE", ["expression", "path"]],
+  ["JSON_QUERY", ["expression", "path"]],
+  ["NEWID", []],
+]);
+
+const DATABASE_FUNCTION_SIGNATURES: Partial<Record<DatabaseType, Map<string, string[]>>> = {
+  mysql: MYSQL_FUNCTION_SIGNATURES,
+  postgres: POSTGRES_FUNCTION_SIGNATURES,
+  sqlite: SQLITE_FUNCTION_SIGNATURES,
+  sqlserver: SQLSERVER_FUNCTION_SIGNATURES,
+};
+
+const COMMON_SQL_FUNCTION_NAMES = new Set([
+  "COUNT",
+  "SUM",
+  "AVG",
+  "MIN",
+  "MAX",
+  "CONCAT",
+  "SUBSTRING",
+  "SUBSTR",
+  "REPLACE",
+  "TRIM",
+  "LTRIM",
+  "RTRIM",
+  "UPPER",
+  "LOWER",
+  "LENGTH",
+  "EXTRACT",
+  "NOW",
+  "ROUND",
+  "FLOOR",
+  "CEIL",
+  "CEILING",
+  "ABS",
+  "MOD",
+  "POWER",
+  "SQRT",
+  "SIGN",
+  "COALESCE",
+  "NULLIF",
+  "CAST",
+  "GREATEST",
+  "LEAST",
+]);
+
 export interface SqlCompletionTable {
   name: string;
   schema?: string;
@@ -696,6 +987,7 @@ export function buildSqlCompletionItems(
     schemas?: string[];
     translations?: SqlCompletionTranslations;
     dialect?: "mysql" | "postgres" | "sqlserver";
+    databaseType?: DatabaseType;
   },
 ): SqlCompletionItem[] {
   const context = getSqlCompletionContext(sql, cursor);
@@ -713,11 +1005,17 @@ export function buildSqlCompletionItemsFromContext(
     translations?: SqlCompletionTranslations;
     snippets?: SqlSnippet[];
     dialect?: "mysql" | "postgres" | "sqlserver";
+    databaseType?: DatabaseType;
   },
 ): SqlCompletionItem[] {
   const items: SqlCompletionItem[] = [];
   const t = input.translations;
   const dialect = input.dialect;
+  const databaseType = input.databaseType;
+
+  if (databaseType === "mongodb") {
+    return dedupeAndSort(buildMongoCompletionItems(context.prefix));
+  }
 
   if (
     !context.exclusiveTableSuggestions &&
@@ -725,7 +1023,7 @@ export function buildSqlCompletionItemsFromContext(
     !context.exclusiveRoutineSuggestions
   ) {
     items.push(...buildSnippetItems(context.prefix, input.snippets ?? DEFAULT_SQL_SNIPPETS));
-    items.push(...buildFunctionSnippetItems(context.prefix, getFunctionDescriptions(t)));
+    items.push(...buildFunctionSnippetItems(context.prefix, getFunctionDescriptions(t), databaseType));
   }
 
   if (
@@ -757,7 +1055,7 @@ export function buildSqlCompletionItemsFromContext(
   }
 
   if (context.suggestKeywords && !context.exclusiveRoutineSuggestions) {
-    items.push(...buildKeywordItems(context.prefix, context));
+    items.push(...buildKeywordItems(context.prefix, context, databaseType));
   }
 
   if (!context.exclusiveTableSuggestions && context.suggestColumns) {
@@ -2473,10 +2771,25 @@ function buildSnippetItems(prefix: string, snippets: SqlSnippet[]): SqlCompletio
     });
 }
 
-function buildFunctionSnippetItems(prefix: string, functionDescriptions: Map<string, string>): SqlCompletionItem[] {
+function activeFunctionSignatures(databaseType?: DatabaseType): Map<string, string[]> {
+  const signatures = databaseType
+    ? new Map(Array.from(SQL_FUNCTION_SIGNATURES.entries()).filter(([name]) => COMMON_SQL_FUNCTION_NAMES.has(name)))
+    : new Map(SQL_FUNCTION_SIGNATURES);
+  const databaseSignatures = databaseType ? DATABASE_FUNCTION_SIGNATURES[databaseType] : undefined;
+  if (databaseSignatures) {
+    for (const [name, parameters] of databaseSignatures) signatures.set(name, parameters);
+  }
+  return signatures;
+}
+
+function buildFunctionSnippetItems(
+  prefix: string,
+  functionDescriptions: Map<string, string>,
+  databaseType?: DatabaseType,
+): SqlCompletionItem[] {
   const items: SqlCompletionItem[] = [];
 
-  for (const [name, parameters] of SQL_FUNCTION_SIGNATURES.entries()) {
+  for (const [name, parameters] of activeFunctionSignatures(databaseType).entries()) {
     if (!matchesPrefix(name, prefix)) continue;
     const paramStr = parameters.length > 0 ? parameters.map((p) => `\${${p}}`).join(", ") : "";
     items.push({
@@ -2501,6 +2814,39 @@ function buildFunctionSnippetItems(prefix: string, functionDescriptions: Map<str
   }
 
   return items;
+}
+
+const MONGO_COMPLETIONS: Array<Pick<SqlCompletionItem, "label" | "type" | "detail" | "apply">> = [
+  { label: "find", type: "function", detail: "MongoDB query documents", apply: "find({})" },
+  { label: "findOne", type: "function", detail: "MongoDB query one document", apply: "findOne({})" },
+  { label: "aggregate", type: "function", detail: "MongoDB aggregation pipeline", apply: "aggregate([])" },
+  {
+    label: "countDocuments",
+    type: "function",
+    detail: "MongoDB count matching documents",
+    apply: "countDocuments({})",
+  },
+  { label: "distinct", type: "function", detail: "MongoDB distinct field values", apply: 'distinct("field", {})' },
+  { label: "insertOne", type: "function", detail: "MongoDB insert one document", apply: "insertOne({})" },
+  { label: "updateOne", type: "function", detail: "MongoDB update one document", apply: "updateOne({}, { $set: {} })" },
+  { label: "deleteOne", type: "function", detail: "MongoDB delete one document", apply: "deleteOne({})" },
+  { label: "sort", type: "function", detail: "MongoDB sort cursor", apply: "sort({ field: 1 })" },
+  { label: "limit", type: "function", detail: "MongoDB limit cursor", apply: "limit(100)" },
+  { label: "skip", type: "function", detail: "MongoDB skip cursor", apply: "skip(0)" },
+  { label: "db.collection.find", type: "snippet", detail: "MongoDB find command", apply: "db.collection.find({})" },
+  {
+    label: "db.collection.aggregate",
+    type: "snippet",
+    detail: "MongoDB aggregate command",
+    apply: "db.collection.aggregate([])",
+  },
+];
+
+function buildMongoCompletionItems(prefix: string): SqlCompletionItem[] {
+  return MONGO_COMPLETIONS.filter((item) => matchesPrefix(item.label, prefix)).map((item) => ({
+    ...item,
+    boost: computeBoost(item.label, prefix) + (item.type === "snippet" ? 400 : 600),
+  }));
 }
 
 function buildSelectAliasItems(context: SqlCompletionContext): SqlCompletionItem[] {
@@ -2542,7 +2888,19 @@ function buildNonAggregatedColumnItems(
   return items;
 }
 
-function buildKeywordItems(prefix: string, context: SqlCompletionContext): SqlCompletionItem[] {
+function activeSqlKeywords(databaseType?: DatabaseType): string[] {
+  if (databaseType === "mongodb") return [];
+  const databaseKeywords = databaseType ? DATABASE_SQL_KEYWORDS[databaseType] : undefined;
+  return databaseType
+    ? Array.from(new Set([...COMMON_SQL_KEYWORDS, ...(databaseKeywords ?? [])]))
+    : Array.from(new Set(SQL_KEYWORDS));
+}
+
+function buildKeywordItems(
+  prefix: string,
+  context: SqlCompletionContext,
+  databaseType?: DatabaseType,
+): SqlCompletionItem[] {
   const isDml =
     context.statementKind === "select" ||
     context.statementKind === "insert" ||
@@ -2550,21 +2908,24 @@ function buildKeywordItems(prefix: string, context: SqlCompletionContext): SqlCo
     context.statementKind === "delete";
   const showDdl = !isDml || context.suggestTables;
 
-  return SQL_KEYWORDS.filter((keyword) => {
-    if (SQL_FUNCTION_SIGNATURES.has(keyword)) return false;
-    if (WINDOW_FUNCTIONS.has(keyword)) return false;
-    if (!matchesPrefix(keyword, prefix)) return false;
-    if (!showDdl && isDml && (DDL_ONLY_KEYWORDS.has(keyword) || DATA_TYPE_KEYWORDS.has(keyword))) return false;
-    return true;
-  }).map((keyword) => {
-    const base = computeBoost(keyword, prefix);
-    const freqBoost = HIGH_FREQUENCY_KEYWORDS.has(keyword) ? 100 : 0;
-    return {
-      label: keyword,
-      type: "keyword" as const,
-      boost: base + freqBoost,
-    };
-  });
+  return activeSqlKeywords(databaseType)
+    .filter((keyword) => {
+      if (SQL_FUNCTION_SIGNATURES.has(keyword)) return false;
+      if (databaseType && DATABASE_FUNCTION_SIGNATURES[databaseType]?.has(keyword)) return false;
+      if (WINDOW_FUNCTIONS.has(keyword)) return false;
+      if (!matchesPrefix(keyword, prefix)) return false;
+      if (!showDdl && isDml && (DDL_ONLY_KEYWORDS.has(keyword) || DATA_TYPE_KEYWORDS.has(keyword))) return false;
+      return true;
+    })
+    .map((keyword) => {
+      const base = computeBoost(keyword, prefix);
+      const freqBoost = HIGH_FREQUENCY_KEYWORDS.has(keyword) ? 100 : 0;
+      return {
+        label: keyword,
+        type: "keyword" as const,
+        boost: base + freqBoost,
+      };
+    });
 }
 
 function matchesPrefix(candidate: string, prefix: string): boolean {

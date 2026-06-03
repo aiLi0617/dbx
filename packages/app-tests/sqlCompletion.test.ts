@@ -77,6 +77,61 @@ test("suggests SQL keywords for generic keyword input", () => {
   assert.equal(keyword.type, "keyword");
 });
 
+test("suggests PostgreSQL-specific data types and functions", () => {
+  const typeItems = buildSqlCompletionItems(
+    "create table events (payload js",
+    "create table events (payload js".length,
+    {
+      tables: [],
+      columnsByTable: new Map(),
+      databaseType: "postgres",
+    },
+  );
+  const serialItems = buildSqlCompletionItems("create table events (id ser", "create table events (id ser".length, {
+    tables: [],
+    columnsByTable: new Map(),
+    databaseType: "postgres",
+  });
+  const functionItems = buildSqlCompletionItems("select jsonb_b", "select jsonb_b".length, {
+    tables: [],
+    columnsByTable: new Map(),
+    databaseType: "postgres",
+  });
+  const mysqlFunctionItems = buildSqlCompletionItems("select date_f", "select date_f".length, {
+    tables: [],
+    columnsByTable: new Map(),
+    databaseType: "mysql",
+  });
+  const postgresDateItems = buildSqlCompletionItems("select date_f", "select date_f".length, {
+    tables: [],
+    columnsByTable: new Map(),
+    databaseType: "postgres",
+  });
+
+  assert.ok(typeItems.some((item) => item.type === "keyword" && item.label === "JSONB"));
+  assert.ok(serialItems.some((item) => item.type === "keyword" && item.label === "SERIAL"));
+  assert.ok(functionItems.some((item) => item.type === "function" && item.label === "JSONB_BUILD_OBJECT"));
+  assert.ok(mysqlFunctionItems.some((item) => item.type === "function" && item.label === "DATE_FORMAT"));
+  assert.equal(
+    postgresDateItems.some((item) => item.type === "function" && item.label === "DATE_FORMAT"),
+    false,
+  );
+});
+
+test("MongoDB completion avoids SQL keywords", () => {
+  const items = buildSqlCompletionItems("fi", 2, {
+    tables: [],
+    columnsByTable: new Map(),
+    databaseType: "mongodb",
+  });
+
+  assert.ok(items.some((item) => item.type === "function" && item.label === "find"));
+  assert.equal(
+    items.some((item) => item.type === "keyword" && item.label === "SELECT"),
+    false,
+  );
+});
+
 test("quotes PostgreSQL table identifiers when completion inserts them", () => {
   const sql = "select * from Order";
   const items = buildSqlCompletionItems(sql, sql.length, {
