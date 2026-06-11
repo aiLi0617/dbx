@@ -133,6 +133,7 @@ import { useCellDetailEditor, type UseCellDetailEditorReturn } from "@/composabl
 import { useTheme } from "@/composables/useTheme";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { nextDataGridSortState, type DataGridSortDirection } from "@/lib/dataGridSort";
+import { getTableMetadataCapabilities } from "@/lib/tableMetadataCapabilities";
 
 const SqlPreviewPanel = defineAsyncComponent(() => import("@/components/editor/SqlPreviewPanel.vue"));
 
@@ -5175,6 +5176,7 @@ async function prefetchCopyStatements() {
 const sqlOneLiner = computed(() => props.sql?.replace(/\s+/g, " ").trim() || "");
 
 type TableInfoTab = "columns" | "indexes" | "foreignKeys" | "triggers" | "ddl";
+type TableInfoTabItem = { id: TableInfoTab; label: string; icon: Component; count?: number };
 
 const TABLE_INFO_DRAWER_MIN_WIDTH = 240;
 const CELL_DETAIL_PANEL_MIN_HEIGHT = 180;
@@ -5268,26 +5270,34 @@ function toggleCellDetailPanelLayout() {
   });
 }
 
-const tableInfoTabs = computed(
-  () =>
-    [
-      {
-        id: "columns" as const,
-        label: t("grid.tableInfoColumns"),
-        icon: ListTree,
-        count: props.tableMeta?.columns.length,
-      },
-      { id: "indexes" as const, label: t("grid.tableInfoIndexes"), icon: KeyRound, count: indexes.value.length },
-      {
-        id: "foreignKeys" as const,
-        label: t("grid.tableInfoForeignKeys"),
-        icon: Link2,
-        count: foreignKeys.value.length,
-      },
-      { id: "triggers" as const, label: t("grid.tableInfoTriggers"), icon: RotateCcw, count: triggers.value.length },
-      { id: "ddl" as const, label: "DDL", icon: Code2 },
-    ] satisfies Array<{ id: TableInfoTab; label: string; icon: Component; count?: number }>,
-);
+const tableMetadataCapabilities = computed(() => getTableMetadataCapabilities(props.databaseType));
+const tableInfoTabs = computed(() => {
+  const tabs: TableInfoTabItem[] = [
+    {
+      id: "columns",
+      label: t("grid.tableInfoColumns"),
+      icon: ListTree,
+      count: props.tableMeta?.columns.length,
+    },
+    { id: "indexes", label: t("grid.tableInfoIndexes"), icon: KeyRound, count: indexes.value.length },
+  ];
+  if (tableMetadataCapabilities.value.foreignKeys) {
+    tabs.push({
+      id: "foreignKeys",
+      label: t("grid.tableInfoForeignKeys"),
+      icon: Link2,
+      count: foreignKeys.value.length,
+    });
+  }
+  if (tableMetadataCapabilities.value.triggers) {
+    tabs.push({ id: "triggers", label: t("grid.tableInfoTriggers"), icon: RotateCcw, count: triggers.value.length });
+  }
+  tabs.push({ id: "ddl", label: "DDL", icon: Code2 });
+  return tabs;
+});
+const tableInfoTabListStyle = computed(() => ({
+  gridTemplateColumns: `repeat(${tableInfoTabs.value.length}, minmax(0, 1fr))`,
+}));
 
 async function toggleTableInfo(tab: TableInfoTab = activeTableInfoTab.value) {
   if (showTableInfo.value && activeTableInfoTab.value === tab) {
@@ -5299,11 +5309,12 @@ async function toggleTableInfo(tab: TableInfoTab = activeTableInfoTab.value) {
 }
 
 async function selectTableInfoTab(tab: TableInfoTab) {
-  activeTableInfoTab.value = tab;
-  if (tab === "ddl") await fetchDdl();
-  else if (tab === "indexes") await fetchIndexes();
-  else if (tab === "foreignKeys") await fetchForeignKeys();
-  else if (tab === "triggers") await fetchTriggers();
+  const nextTab = tableInfoTabs.value.some((item) => item.id === tab) ? tab : "columns";
+  activeTableInfoTab.value = nextTab;
+  if (nextTab === "ddl") await fetchDdl();
+  else if (nextTab === "indexes") await fetchIndexes();
+  else if (nextTab === "foreignKeys") await fetchForeignKeys();
+  else if (nextTab === "triggers") await fetchTriggers();
 }
 
 async function fetchDdl() {
@@ -6882,7 +6893,7 @@ const gridContextMenuItems = computed<ContextMenuItem[]>(() => {
                 <X class="w-3 h-3" />
               </Button>
             </div>
-            <div class="grid grid-cols-5 border-b bg-background shrink-0">
+            <div class="grid border-b bg-background shrink-0" :style="tableInfoTabListStyle">
               <button
                 v-for="tab in tableInfoTabs"
                 :key="tab.id"

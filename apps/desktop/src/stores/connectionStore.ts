@@ -45,6 +45,7 @@ import { decodeSchemaTreeCache, encodeSchemaTreeCache } from "@/lib/schemaTreeCa
 import { sortSidebarTreeChildrenForParent } from "@/lib/sidebarNodeOrdering";
 import { prunePinnedTreeNodeIdsForConnection } from "@/lib/pinnedTreeNodeIds";
 import { supportsDatabaseUserAdmin } from "@/lib/databaseUserAdmin";
+import { getTableMetadataCapabilities } from "@/lib/tableMetadataCapabilities";
 import { useSettingsStore } from "@/stores/settingsStore";
 
 const PINNED_TREE_NODES_STORAGE_KEY = "dbx-pinned-tree-nodes";
@@ -1203,9 +1204,10 @@ export const useConnectionStore = defineStore("connection", () => {
     ];
 
     const config = getConfig(connectionId);
-    if (node.type === "table" && config?.db_type !== "influxdb") {
-      children.push(
-        {
+    const metadataCapabilities = getTableMetadataCapabilities(effectiveDatabaseTypeForConnection(config));
+    if (node.type === "table") {
+      if (metadataCapabilities.indexes) {
+        children.push({
           id: `${parentId}:__indexes`,
           label: "tree.indexes",
           type: "group-indexes",
@@ -1215,8 +1217,10 @@ export const useConnectionStore = defineStore("connection", () => {
           tableName: table,
           isExpanded: false,
           children: [],
-        },
-        {
+        });
+      }
+      if (metadataCapabilities.foreignKeys) {
+        children.push({
           id: `${parentId}:__fkeys`,
           label: "tree.foreignKeys",
           type: "group-fkeys",
@@ -1226,8 +1230,10 @@ export const useConnectionStore = defineStore("connection", () => {
           tableName: table,
           isExpanded: false,
           children: [],
-        },
-        {
+        });
+      }
+      if (metadataCapabilities.triggers) {
+        children.push({
           id: `${parentId}:__triggers`,
           label: "tree.triggers",
           type: "group-triggers",
@@ -1237,8 +1243,8 @@ export const useConnectionStore = defineStore("connection", () => {
           tableName: table,
           isExpanded: false,
           children: [],
-        },
-      );
+        });
+      }
     }
 
     setChildren(node, children);
@@ -1283,6 +1289,12 @@ export const useConnectionStore = defineStore("connection", () => {
 
     node.isLoading = true;
     try {
+      const metadataCapabilities = getTableMetadataCapabilities(effectiveDatabaseTypeForConnection(getConfig(connectionId)));
+      if (!metadataCapabilities.indexes) {
+        setChildren(node, []);
+        node.isExpanded = true;
+        return;
+      }
       const querySchema = metadataQuerySchema(connectionId, database, schema);
       const indexes = await api.listIndexes(connectionId, database, querySchema, table);
       setChildren(
@@ -1314,6 +1326,12 @@ export const useConnectionStore = defineStore("connection", () => {
 
     node.isLoading = true;
     try {
+      const metadataCapabilities = getTableMetadataCapabilities(effectiveDatabaseTypeForConnection(getConfig(connectionId)));
+      if (!metadataCapabilities.foreignKeys) {
+        setChildren(node, []);
+        node.isExpanded = true;
+        return;
+      }
       const querySchema = metadataQuerySchema(connectionId, database, schema);
       const fkeys = await api.listForeignKeys(connectionId, database, querySchema, table);
       setChildren(
@@ -1345,6 +1363,12 @@ export const useConnectionStore = defineStore("connection", () => {
 
     node.isLoading = true;
     try {
+      const metadataCapabilities = getTableMetadataCapabilities(effectiveDatabaseTypeForConnection(getConfig(connectionId)));
+      if (!metadataCapabilities.triggers) {
+        setChildren(node, []);
+        node.isExpanded = true;
+        return;
+      }
       const querySchema = metadataQuerySchema(connectionId, database, schema);
       const triggers = await api.listTriggers(connectionId, database, querySchema, table);
       setChildren(

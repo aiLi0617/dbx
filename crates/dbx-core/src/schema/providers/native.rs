@@ -127,6 +127,9 @@ pub(in crate::schema) async fn list_indexes(
         PoolKind::Rqlite(client) => db::rqlite_driver::list_indexes(client, schema, table).await,
         PoolKind::Turso(client) => db::turso_driver::list_indexes(client, schema, table).await,
         PoolKind::MongoDb(client) => db::mongo_driver::list_indexes(client, database, table).await,
+        PoolKind::ClickHouse(client) => {
+            db::clickhouse_driver::list_indexes(client, clickhouse_metadata_database(database, schema), table).await
+        }
         _ => Ok(vec![]),
     }
 }
@@ -237,6 +240,14 @@ fn collection_names_to_tables(names: Vec<String>, table_type: &str) -> Vec<db::T
             parent_name: None,
         })
         .collect()
+}
+
+fn clickhouse_metadata_database<'a>(database: &'a str, schema: &'a str) -> &'a str {
+    if database.is_empty() {
+        schema
+    } else {
+        database
+    }
 }
 
 fn is_opengauss_family_config(config: &ConnectionConfig) -> bool {

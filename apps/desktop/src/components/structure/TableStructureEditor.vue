@@ -22,6 +22,7 @@ import { type SqlHighlighter, createShikiSqlHighlighter } from "@/lib/sqlHighlig
 import { copyToClipboard } from "@/lib/clipboard";
 import { queryTimeoutSecsForConnection } from "@/lib/queryTimeout";
 import { type EditableStructureColumn, type EditableStructureIndex } from "@/lib/tableStructureEditorSql";
+import { getTableMetadataCapabilities } from "@/lib/tableMetadataCapabilities";
 import { getTableStructureCapabilities } from "@/lib/tableStructureCapabilities";
 import { connectionObjectTreeQuerySchema, effectiveDatabaseTypeForConnection } from "@/lib/jdbcDialect";
 import { buildStructureTargetLabel, combineDataTypeForDatabase, createColumnDrafts, createIndexDrafts, getDataTypeOptions, getDefaultLengthForType, splitDataType, toColumnNames } from "@/lib/tableStructureEditorState";
@@ -268,6 +269,7 @@ function onIndexColResize(e: MouseEvent, col: number) {
 const connection = computed(() => (props.connectionId ? store.getConfig(props.connectionId) : undefined));
 const databaseType = computed(() => effectiveDatabaseTypeForConnection(connection.value));
 const structureCapabilities = computed(() => getTableStructureCapabilities(databaseType.value));
+const tableMetadataCapabilities = computed(() => getTableMetadataCapabilities(databaseType.value));
 const structureDialect = computed(() => structureCapabilities.value.dialect);
 const isTableCommentDisabled = computed(() => !structureCapabilities.value.comment);
 const dataTypeOptions = computed(() => getDataTypeOptions(databaseType.value));
@@ -372,8 +374,8 @@ async function loadStructure(silent = false) {
     const nextColumns = await api.getColumns(props.connectionId, props.database, metadataSchema.value, props.tableName);
     const [nextIndexes, nextForeignKeys, nextTriggers] = await Promise.all([
       api.listIndexes(props.connectionId, props.database, metadataSchema.value, props.tableName).catch(() => []),
-      api.listForeignKeys(props.connectionId, props.database, metadataSchema.value, props.tableName).catch(() => []),
-      api.listTriggers(props.connectionId, props.database, metadataSchema.value, props.tableName).catch(() => []),
+      tableMetadataCapabilities.value.foreignKeys ? api.listForeignKeys(props.connectionId, props.database, metadataSchema.value, props.tableName).catch(() => []) : Promise.resolve([]),
+      tableMetadataCapabilities.value.triggers ? api.listTriggers(props.connectionId, props.database, metadataSchema.value, props.tableName).catch(() => []) : Promise.resolve([]),
     ]);
     columns.value = createColumnDrafts(nextColumns, databaseType.value);
     indexes.value = createIndexDrafts(nextIndexes);
@@ -670,6 +672,11 @@ onBeforeUnmount(() => {
   unregisterStructureEditorShortcuts();
 });
 
+watch(tableMetadataCapabilities, (capabilities) => {
+  if (activeTab.value === "foreignKeys" && !capabilities.foreignKeys) activeTab.value = "columns";
+  if (activeTab.value === "triggers" && !capabilities.triggers) activeTab.value = "columns";
+});
+
 watch(
   [isCreateMode, databaseType, () => props.schema, () => props.tableName, newTableName, tableComment, columns, indexes],
   () => {
@@ -730,8 +737,8 @@ watch(activeTab, (tab) => {
             <TabsList>
               <TabsTrigger value="columns">{{ t("structureEditor.columns") }}</TabsTrigger>
               <TabsTrigger value="indexes">{{ t("structureEditor.indexes") }}</TabsTrigger>
-              <TabsTrigger value="foreignKeys">{{ t("structureEditor.foreignKeys") }}</TabsTrigger>
-              <TabsTrigger value="triggers">{{ t("structureEditor.triggers") }}</TabsTrigger>
+              <TabsTrigger v-if="tableMetadataCapabilities.foreignKeys" value="foreignKeys">{{ t("structureEditor.foreignKeys") }}</TabsTrigger>
+              <TabsTrigger v-if="tableMetadataCapabilities.triggers" value="triggers">{{ t("structureEditor.triggers") }}</TabsTrigger>
               <TabsTrigger value="ddl" v-if="!isCreateMode">DDL</TabsTrigger>
             </TabsList>
             <div class="flex shrink-0 items-center gap-1.5">
@@ -1077,7 +1084,7 @@ watch(activeTab, (tab) => {
             </table>
           </TabsContent>
 
-          <TabsContent value="foreignKeys" class="m-0 min-h-0 flex-1 overflow-auto p-[var(--structure-cell-px)]">
+          <TabsContent v-if="tableMetadataCapabilities.foreignKeys" value="foreignKeys" class="m-0 min-h-0 flex-1 overflow-auto p-[var(--structure-cell-px)]">
             <div v-if="foreignKeys.length === 0" class="py-10 text-center text-muted-foreground">
               {{ t("structureEditor.emptyReadonly") }}
             </div>
@@ -1089,7 +1096,7 @@ watch(activeTab, (tab) => {
             </div>
           </TabsContent>
 
-          <TabsContent value="triggers" class="m-0 min-h-0 flex-1 overflow-auto p-[var(--structure-cell-px)]">
+          <TabsContent v-if="tableMetadataCapabilities.triggers" value="triggers" class="m-0 min-h-0 flex-1 overflow-auto p-[var(--structure-cell-px)]">
             <div v-if="triggers.length === 0" class="py-10 text-center text-muted-foreground">
               {{ t("structureEditor.emptyReadonly") }}
             </div>
