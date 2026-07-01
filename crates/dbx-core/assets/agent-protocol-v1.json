@@ -71,6 +71,7 @@
     "server_version",
     "insert_document",
     "update_document",
+    "update_documents",
     "delete_document"
   ],
   "kvMethods": [
