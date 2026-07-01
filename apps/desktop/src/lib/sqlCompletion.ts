@@ -1185,6 +1185,7 @@ export function buildSqlCompletionItems(
     autoAliasTables?: boolean;
   },
 ): SqlCompletionItem[] {
+  if (isSqlCompletionSuppressedContext(sql, cursor)) return [];
   const context = getSqlCompletionContext(sql, cursor);
   return buildSqlCompletionItemsFromContext(context, input);
 }
@@ -1290,7 +1291,7 @@ class SqlCompletionProvider {
 }
 
 export function shouldAutoOpenSqlCompletion(sql: string, cursor: number): boolean {
-  if (isSqlCommentContext(sql, cursor)) return false;
+  if (isSqlCompletionSuppressedContext(sql, cursor)) return false;
   const previousChar = sql[cursor - 1];
   if (!previousChar) return false;
   if (/\bon\s+$/i.test(sql.slice(0, cursor))) return true;
@@ -1303,7 +1304,21 @@ export function shouldAutoOpenSqlCompletion(sql: string, cursor: number): boolea
   return /[\w$.@]/.test(previousChar);
 }
 
+export function isSqlCompletionSuppressedContext(sql: string, cursor: number): boolean {
+  const context = getSqlLexicalContext(sql, cursor);
+  return context.inLineComment || context.inBlockComment || context.inStringLiteral;
+}
+
+export function isSqlStringLiteralContext(sql: string, cursor: number): boolean {
+  return getSqlLexicalContext(sql, cursor).inStringLiteral;
+}
+
 export function isSqlCommentContext(sql: string, cursor: number): boolean {
+  const context = getSqlLexicalContext(sql, cursor);
+  return context.inLineComment || context.inBlockComment;
+}
+
+function getSqlLexicalContext(sql: string, cursor: number): { inLineComment: boolean; inBlockComment: boolean; inStringLiteral: boolean } {
   const end = Math.max(0, Math.min(cursor, sql.length));
   let inSingleQuote = false;
   let inDoubleQuote = false;
@@ -1376,7 +1391,14 @@ export function isSqlCommentContext(sql: string, cursor: number): boolean {
     }
   }
 
-  return inLineComment || inBlockComment;
+  // Only single-quoted text is a value literal here. Double quotes, backticks,
+  // and brackets delimit identifiers in common SQL dialects, so they must not
+  // suppress identifier completion.
+  return {
+    inLineComment,
+    inBlockComment,
+    inStringLiteral: inSingleQuote,
+  };
 }
 
 export function isSqlLikeCompletionStatement(sql: string, cursor: number): boolean {

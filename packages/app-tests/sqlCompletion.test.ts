@@ -5,6 +5,7 @@ import {
   getSqlFunctionSignatureHelp,
   getSqlCompletionResultValidFor,
   isSqlCommentContext,
+  isSqlStringLiteralContext,
   shouldAutoOpenSqlCompletion,
   extractCteDefinitions,
   getSqlCompletionContext,
@@ -796,6 +797,29 @@ test("does not auto-open completion inside SQL comments", () => {
   assert.equal(isSqlCommentContext("select /* comment */ val", "select /* comment */ val".length), false);
   assert.equal(shouldAutoOpenSqlCompletion("select '-- not comment' as value", "select '-- not comment' as value".length), true);
   assert.equal(shouldAutoOpenSqlCompletion("select /* comment */ val", "select /* comment */ val".length), true);
+});
+
+test("does not auto-open or build metadata completion inside SQL string literals", () => {
+  const likeSql = "select * from orders where status like '%9250%'";
+  const likeCursor = "select * from orders where status like '%9250%".length;
+  assert.equal(isSqlStringLiteralContext(likeSql, likeCursor), true);
+  assert.equal(shouldAutoOpenSqlCompletion(likeSql, likeCursor), false);
+  assert.deepEqual(
+    buildSqlCompletionItems(likeSql, likeCursor, {
+      tables,
+      columnsByTable,
+    }),
+    [],
+  );
+
+  const escapedQuoteSql = "select * from orders where status = 'it''s 9250'";
+  const escapedQuoteCursor = "select * from orders where status = 'it''s 9250".length;
+  assert.equal(isSqlStringLiteralContext(escapedQuoteSql, escapedQuoteCursor), true);
+  assert.equal(shouldAutoOpenSqlCompletion(escapedQuoteSql, escapedQuoteCursor), false);
+
+  const afterLiteralSql = "select '-- not comment' as value";
+  assert.equal(isSqlStringLiteralContext(afterLiteralSql, afterLiteralSql.length), false);
+  assert.equal(shouldAutoOpenSqlCompletion(afterLiteralSql, afterLiteralSql.length), true);
 });
 
 test("auto-opens completion after word characters and explicit dot qualifiers", () => {
