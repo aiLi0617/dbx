@@ -1503,23 +1503,21 @@ pub async fn list_tables_filtered(
         })
         .collect();
 
-    if tables.is_empty() && should_fallback_empty_list_tables(filter, limit, offset, object_types) {
+    if tables.is_empty() && should_fallback_empty_list_tables(filter) {
         log::debug!("Falling back to SHOW TABLES for database `{database}` after information_schema.TABLES returned no named tables");
-        return list_tables_show(pool, database).await;
+        return list_tables_show(pool, database)
+            .await
+            .map(|tables| filter_list_tables_fallback(tables, filter, limit, offset, object_types));
     }
 
     Ok(tables)
 }
 
-fn should_fallback_empty_list_tables(
-    filter: Option<&str>,
-    limit: Option<usize>,
-    offset: Option<usize>,
-    object_types: Option<&[String]>,
-) -> bool {
-    let has_filter = filter.is_some_and(|filter| !filter.trim().is_empty());
-    let has_object_types = object_types.is_some_and(|object_types| !object_types.is_empty());
-    !has_filter && limit.is_none() && offset.unwrap_or(0) == 0 && !has_object_types
+fn should_fallback_empty_list_tables(filter: Option<&str>) -> bool {
+    // MySQL proxies such as MyCat can return an empty information_schema.TABLES
+    // even when SHOW TABLES exposes objects. Avoid the fallback for active
+    // searches so normal MySQL "no match" queries do not rescan large schemas.
+    !filter.is_some_and(|filter| !filter.trim().is_empty())
 }
 
 fn filter_list_tables_fallback(
@@ -2018,8 +2016,22 @@ pub async fn list_objects(pool: &MySqlPool, database: &str) -> Result<Vec<Object
     let mut conn = get_conn_with_timeout(pool, super::connection_timeout()).await?;
 
     let tables_sql = list_tables_objects_sql(database);
-    let result = conn.query_iter(&tables_sql).await.map_err(|e| e.to_string())?;
+    let result = match conn.query_iter(&tables_sql).await {
+        Ok(result) => result,
+        Err(err) => {
+            log::debug!(
+                "Falling back to SHOW TABLES for object browser database `{database}` after information_schema.TABLES failed: {err}"
+            );
+            return list_table_objects_show(pool, database).await;
+        }
+    };
     let table_rows: Vec<mysql_async::Row> = result.collect_and_drop().await.map_err(|e| e.to_string())?;
+    if table_rows.is_empty() {
+        log::debug!(
+            "Falling back to SHOW TABLES for object browser database `{database}` after information_schema.TABLES returned no named tables"
+        );
+        return list_table_objects_show(pool, database).await;
+    }
     let mut objects: Vec<ObjectInfo> = table_rows.iter().map(|row| row_to_object(row, database)).collect();
 
     // Routines are queried separately: some MySQL-compatible servers (sharding proxies,
@@ -3826,12 +3838,11 @@ mod tests {
     }
 
     #[test]
-    fn mysql_empty_list_tables_fallback_only_for_unfiltered_query() {
-        assert!(should_fallback_empty_list_tables(None, None, None, None));
-        assert!(!should_fallback_empty_list_tables(Some("missing"), None, None, None));
-        assert!(!should_fallback_empty_list_tables(None, Some(1000), None, None));
-        assert!(!should_fallback_empty_list_tables(None, None, Some(1000), None));
-        assert!(!should_fallback_empty_list_tables(None, None, None, Some(&["VIEW".to_string()])));
+    fn mysql_empty_list_tables_fallback_allows_sidebar_paging_and_type_filters() {
+        assert!(should_fallback_empty_list_tables(None));
+        assert!(should_fallback_empty_list_tables(Some("")));
+        assert!(should_fallback_empty_list_tables(Some("  ")));
+        assert!(!should_fallback_empty_list_tables(Some("missing")));
     }
 
     #[test]
