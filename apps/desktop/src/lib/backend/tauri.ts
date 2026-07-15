@@ -1729,6 +1729,7 @@ export async function zookeeperDelete(connectionId: string, key: string): Promis
 // --- MongoDB ---
 export interface MongoDocumentResult {
   documents: any[];
+  raw_documents?: string[];
   total: number;
 }
 
