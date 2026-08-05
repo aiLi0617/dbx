@@ -144,6 +144,8 @@ import { sidebarTreeContextKey } from "@/lib/sidebar/sidebarTreeContext";
 import { batchTableEmptyFeedback, runBatchTableEmpty } from "@/lib/sidebar/batchTableEmpty";
 import { runBatchTableTruncate } from "@/lib/table/batchTableTruncate";
 import { runBatchTableDrop } from "@/lib/table/batchTableDrop";
+import { buildSidebarDdlTemplateSql, sidebarDdlTargetsForExecutionContext } from "@/lib/sidebar/sidebarDdlTemplate";
+import { sidebarStructureExportTargets } from "@/lib/sidebar/sidebarExportRuntime";
 import { isTauriRuntime } from "@/lib/backend/tauriRuntime";
 import { copyToClipboard } from "@/lib/common/clipboard";
 import { rankSavedSqlHistory, type SavedSqlHistoryScope } from "@/lib/savedSql/savedSqlHistory";
@@ -778,7 +780,7 @@ async function loadMoreObjectGroupChildren() {
   try {
     await connectionStore.loadMoreObjectGroupChildren(node);
   } catch (e: any) {
-    toast(t("connection.connectFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
+    toast(t("connection.connectFailed", { message: translateBackendError(t, e) }), 5000);
   }
 }
 
@@ -787,7 +789,7 @@ async function loadAllObjectGroupChildren() {
   try {
     await connectionStore.loadAllObjectGroupChildren(node);
   } catch (e: any) {
-    toast(t("connection.connectFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
+    toast(t("connection.connectFailed", { message: translateBackendError(t, e) }), 5000);
   }
 }
 
@@ -1074,7 +1076,7 @@ function activateDataTableFromDoubleClick() {
   if (node.type !== "table" || !hasNodeDatabaseContext(node)) return;
   const activation = settingsStore.editorSettings.sidebarActivation;
   const existingSameTableTab = findExistingSameTableDataTab();
-  const action = dataTableDoubleClickAction(existingSameTableTab, activation, settingsStore.editorSettings.reuseDataTab);
+  const action = dataTableDoubleClickAction(existingSameTableTab, activation, settingsStore.editorSettings.dataTabReuseMode);
   if (action === "none") return;
   if (action === "open") {
     openDataImmediately(node);
@@ -1149,7 +1151,7 @@ async function openObjectBrowser() {
       await toggle();
     }
   } catch (e: any) {
-    toast(t("connection.connectFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
+    toast(t("connection.connectFailed", { message: translateBackendError(t, e) }), 5000);
     openDriverStoreForInstallError(e?.message || String(e));
   }
 }
@@ -1162,7 +1164,7 @@ async function openUserAdmin() {
     connectionStore.activeConnectionId = node.connectionId;
     queryStore.openUserAdmin(node.connectionId);
   } catch (e: any) {
-    toast(t("connection.connectFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
+    toast(t("connection.connectFailed", { message: translateBackendError(t, e) }), 5000);
   }
 }
 
@@ -1174,7 +1176,7 @@ async function openProcessList() {
     connectionStore.activeConnectionId = node.connectionId;
     queryStore.openProcessList(node.connectionId);
   } catch (e: any) {
-    toast(t("connection.connectFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
+    toast(t("connection.connectFailed", { message: translateBackendError(t, e) }), 5000);
   }
 }
 
@@ -1192,7 +1194,7 @@ async function openServerDashboard() {
       queryStore.openMysqlDashboard(node.connectionId);
     }
   } catch (e: any) {
-    toast(t("connection.connectFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
+    toast(t("connection.connectFailed", { message: translateBackendError(t, e) }), 5000);
   }
 }
 
@@ -1204,7 +1206,7 @@ async function openDamengJobAdmin() {
     connectionStore.activeConnectionId = node.connectionId;
     queryStore.openDamengJobAdmin(node.connectionId);
   } catch (e: any) {
-    toast(t("connection.connectFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
+    toast(t("connection.connectFailed", { message: translateBackendError(t, e) }), 5000);
   }
 }
 
@@ -1239,7 +1241,7 @@ async function newQuery() {
     const options = await getDatabaseOptions(node.connectionId);
     queryStore.createTab(node.connectionId, resolveDefaultDatabase(connection, options), undefined, "query");
   } catch (e: any) {
-    toast(t("connection.connectFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
+    toast(t("connection.connectFailed", { message: translateBackendError(t, e) }), 5000);
     openDriverStoreForInstallError(e?.message || String(e));
   }
 }
@@ -1311,7 +1313,7 @@ async function newSelectTemplate() {
     });
     openSqlTemplateTab(context.node.connectionId!, context.node.database!, context.node.schema, context.node.catalog, sql);
   } catch (e: any) {
-    toast(t("connection.connectFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
+    toast(t("connection.connectFailed", { message: translateBackendError(t, e) }), 5000);
   }
 }
 
@@ -1331,7 +1333,7 @@ async function newInsertTemplate() {
     });
     openSqlTemplateTab(context.node.connectionId!, context.node.database!, context.node.schema, context.node.catalog, sql);
   } catch (e: any) {
-    toast(t("connection.connectFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
+    toast(t("connection.connectFailed", { message: translateBackendError(t, e) }), 5000);
   }
 }
 
@@ -1350,7 +1352,7 @@ async function newUpdateTemplate() {
     });
     openSqlTemplateTab(context.node.connectionId!, context.node.database!, context.node.schema, context.node.catalog, sql);
   } catch (e: any) {
-    toast(t("connection.connectFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
+    toast(t("connection.connectFailed", { message: translateBackendError(t, e) }), 5000);
   }
 }
 
@@ -1369,37 +1371,53 @@ async function newDeleteTemplate() {
     });
     openSqlTemplateTab(context.node.connectionId!, context.node.database!, context.node.schema, context.node.catalog, sql);
   } catch (e: any) {
-    toast(t("connection.connectFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
+    toast(t("connection.connectFailed", { message: translateBackendError(t, e) }), 5000);
   }
 }
 
 async function generateDdlTemplate() {
-  const node = activeNode.value;
-  if (!node.connectionId || !hasTreeNodeDatabaseContext(node)) return;
-  if (node.type !== "table" && node.type !== "view" && node.type !== "materialized_view") return;
+  const targets = selectedDdlTargets();
+  if (!targets.length) return;
+  const tabTarget = targets.find((target) => target.id === activeNode.value.id) ?? targets[0]!;
   try {
-    await connectionStore.ensureConnected(node.connectionId);
-    connectionStore.activeConnectionId = node.connectionId;
-    const schema = node.schema || node.database;
-    let ddl: string;
-    if (node.type === "table") {
-      ddl = await api.getTableDisplayDdl(node.connectionId, node.database, schema, node.label, undefined, node.catalog);
-    } else if (node.type === "materialized_view") {
-      ddl = await api.getTableDisplayDdl(node.connectionId, node.database, schema, node.label, "MATERIALIZED_VIEW", node.catalog);
-    } else {
-      const result = await api.getObjectSource(node.connectionId, node.database, schema, node.label, "VIEW");
-      ddl = await buildViewDdl({
-        databaseType: currentDatabaseType(),
-        schema,
-        name: node.label,
-        source: result.source,
-      });
-    }
-    const formatted = await formatSqlForDisplay(ddl, sqlFormatDialectForDbType(currentDatabaseType()), settingsStore.editorSettings.sqlFormatter);
-    openSqlTemplateTab(node.connectionId, node.database, node.schema, node.catalog, formatted, `DDL - ${node.label}`);
+    const sql = await buildSidebarDdlTemplateSql(
+      targets,
+      async (target) => {
+        await connectionStore.ensureConnected(target.connectionId);
+        const schema = target.schema || target.database;
+        if (target.type === "table") return api.getTableDisplayDdl(target.connectionId, target.database, schema, target.label, undefined, target.catalog);
+        if (target.type === "materialized_view") return api.getTableDisplayDdl(target.connectionId, target.database, schema, target.label, "MATERIALIZED_VIEW", target.catalog);
+        const result = await api.getObjectSource(target.connectionId, target.database, schema, target.label, "VIEW");
+        return buildViewDdl({
+          databaseType: databaseTypeForNode(target),
+          schema,
+          name: target.label,
+          source: result.source,
+        });
+      },
+      (ddl, target) => formatSqlForDisplay(ddl, sqlFormatDialectForDbType(databaseTypeForNode(target)), settingsStore.editorSettings.sqlFormatter),
+    );
+    connectionStore.activeConnectionId = tabTarget.connectionId;
+    const title = `DDL - ${targets.map((target) => target.label).join(", ")}`;
+    openSqlTemplateTab(tabTarget.connectionId, tabTarget.database, tabTarget.schema, tabTarget.catalog, sql, title);
   } catch (e: any) {
     toast(e?.message || String(e), 5000);
   }
+}
+
+function selectedDdlTargets() {
+  const targets = sidebarStructureExportTargets(activeNode.value, connectionStore.treeNodes, acceptedSelectionIds ?? connectionStore.selectedTreeNodeIds);
+  return sidebarDdlTargetsForExecutionContext(activeNode.value as TreeNode & { connectionId: string; database: string }, targets);
+}
+
+async function openDdl() {
+  const targets = selectedDdlTargets();
+  if (!targets.length) return;
+  if (targets.length > 1) {
+    await exportStructure();
+    return;
+  }
+  emit("open-ddl", targets[0]!);
 }
 
 async function refresh() {
@@ -1407,7 +1425,7 @@ async function refresh() {
   try {
     await connectionStore.refreshTreeNode(node);
   } catch (e: any) {
-    toast(t("connection.connectFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
+    toast(t("connection.connectFailed", { message: translateBackendError(t, e) }), 5000);
     openDriverStoreForInstallError(e?.message || String(e), node);
   }
 }
@@ -2522,7 +2540,7 @@ async function confirmEditDatabaseProperties() {
     showEditDatabasePropertiesDialog.value = false;
     await connectionStore.loadDatabases(node.connectionId, { force: true });
   } catch (e: any) {
-    toast(t("contextMenu.tableOperationFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
+    toast(t("contextMenu.tableOperationFailed", { message: translateBackendError(t, e) }), 5000);
   } finally {
     editDatabasePropertiesLoading.value = false;
   }
@@ -2594,7 +2612,7 @@ async function confirmEditSchemaComment() {
     showEditSchemaCommentDialog.value = false;
     await connectionStore.loadSchemas(node.connectionId, node.database, { force: true });
   } catch (e: any) {
-    toast(t("contextMenu.tableOperationFailed", { message: translateBackendError(t, e?.message || String(e)) }), 5000);
+    toast(t("contextMenu.tableOperationFailed", { message: translateBackendError(t, e) }), 5000);
   } finally {
     schemaCommentLoading.value = false;
   }
@@ -3603,7 +3621,7 @@ routeDangerDialog(showDropMongoIndexConfirm, () =>
 routeDangerDialog(showDropAllMongoIndexesConfirm, () =>
   dangerRequest({
     title: t("contextMenu.dropAllIndexes"),
-    message: t("contextMenu.confirmDropMongoAllIndexesMessage", { name: activeNode.value.label }),
+    message: t("contextMenu.confirmDropMongoAllIndexesMessage", { name: activeNode.value.tableName || activeNode.value.label }),
     detailsText: t("contextMenu.confirmDropMongoAllIndexesDetails"),
     sql: mongoDropAllIndexesPreview(activeNode.value),
     confirmLabel: t("contextMenu.dropAllIndexes"),
@@ -4274,17 +4292,13 @@ function buildSpecialSidebarMenu(context: SidebarMenuFactoryContext): boolean {
     }
     if (canDropMongoDatabase.value) {
       items.push({ label: "", separator: true });
-      items.push(
-        moreActionsSubmenu([
-          {
-            label: t("contextMenu.dropDatabase"),
-            action: dropDatabase,
-            icon: Trash2,
-            shortcut: shortcutDelete,
-            variant: "destructive" as const,
-          },
-        ]),
-      );
+      items.push({
+        label: t("contextMenu.dropDatabase"),
+        action: dropDatabase,
+        icon: Trash2,
+        shortcut: shortcutDelete,
+        variant: "destructive" as const,
+      });
     }
     return true;
   }
@@ -4318,17 +4332,9 @@ function buildSpecialSidebarMenu(context: SidebarMenuFactoryContext): boolean {
         shortcut: shortcutRename,
       });
     }
-    if (canCreateMongoIndex.value || canDropAllMongoIndexes.value || canDropMongoCollection.value) {
+    if (canDropMongoCollection.value) {
       items.push({ label: "", separator: true });
-      if (canCreateMongoIndex.value) {
-        items.push({ label: t("contextMenu.createMongoIndex"), action: openCreateMongoIndexDialog, icon: Plus });
-      }
-      if (canDropAllMongoIndexes.value) {
-        items.push({ label: t("contextMenu.dropAllIndexes"), action: dropAllMongoIndexes, icon: Trash2, variant: "destructive" as const });
-      }
-      if (canDropMongoCollection.value) {
-        items.push({ label: t("contextMenu.dropCollection"), action: dropMongoCollection, icon: Trash2, shortcut: shortcutDelete, variant: "destructive" as const });
-      }
+      items.push({ label: t("contextMenu.dropCollection"), action: dropMongoCollection, icon: Trash2, shortcut: shortcutDelete, variant: "destructive" as const });
     }
     return true;
   }
@@ -4366,7 +4372,7 @@ function buildObjectSidebarMenu(context: SidebarMenuFactoryContext): boolean {
     if (node.type === "table") {
       items.push({
         label: t("contextMenu.viewDdl"),
-        action: () => emit("open-ddl", node),
+        action: openDdl,
         icon: FileCode,
       });
     }
@@ -4375,7 +4381,7 @@ function buildObjectSidebarMenu(context: SidebarMenuFactoryContext): boolean {
       items.push({ label: t("contextMenu.viewSource"), action: () => openObjectSourceDialog(false), icon: Code2 });
       items.push({
         label: t("contextMenu.viewDdl"),
-        action: () => emit("open-ddl", node),
+        action: openDdl,
         icon: FileCode,
       });
       items.push({ label: t("contextMenu.changeOpenMode"), action: () => emit("open-settings", "navigation"), icon: Settings2 });
@@ -4595,7 +4601,8 @@ function buildObjectGroupSidebarMenu(context: SidebarMenuFactoryContext): boolea
   if (isGroupLabel(node)) {
     const mysqlObjectTemplate = node.connectionId ? mysqlObjectTemplateForGroup(connectionStore.getConfig(node.connectionId), node) : null;
     const hasMongoCreateIndexAction = node.type === "group-indexes" && canCreateMongoIndex.value;
-    const hasGroupCreateAction = (node.type === "group-tables" && canCreateTable.value) || (node.type === "group-views" && !!node.connectionId && !!node.database) || !!mysqlObjectTemplate || hasMongoCreateIndexAction;
+    const hasMongoDropAllIndexesAction = node.type === "group-indexes" && canDropAllMongoIndexes.value;
+    const hasGroupAction = (node.type === "group-tables" && canCreateTable.value) || (node.type === "group-views" && !!node.connectionId && !!node.database) || !!mysqlObjectTemplate || hasMongoCreateIndexAction || hasMongoDropAllIndexesAction;
     const canLoadAllObjectGroup = node.type === "group-tables" || node.type === "group-views" || node.type === "group-materialized-views";
     if (node.type === "group-tables" && canCreateTable.value) {
       items.push({ label: t("contextMenu.createTable"), action: createTable, icon: Plus });
@@ -4615,7 +4622,11 @@ function buildObjectGroupSidebarMenu(context: SidebarMenuFactoryContext): boolea
     if (hasMongoCreateIndexAction) {
       items.push({ label: t("contextMenu.createMongoIndex"), action: openCreateMongoIndexDialog, icon: Plus });
     }
-    if (hasGroupCreateAction) {
+    if (hasMongoDropAllIndexesAction) {
+      if (hasMongoCreateIndexAction) items.push({ label: "", separator: true });
+      items.push({ label: t("contextMenu.dropAllIndexes"), action: dropAllMongoIndexes, icon: Trash2, variant: "destructive" as const });
+    }
+    if (hasGroupAction) {
       items.push({ label: "", separator: true });
     }
     if (node.type === "group-extensions") {

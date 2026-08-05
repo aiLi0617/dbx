@@ -1,6 +1,6 @@
 {
   "repository": "t8y2/dbx",
-  "generatedAt": "2026-08-04T19:14:57.846Z",
+  "generatedAt": "2026-08-04T18:33:39.986Z",
   "stars": 13194,
   "contributors": [
     {
@@ -254,6 +254,15 @@
       "mergedPullRequests": 9,
       "firstContributionAt": "2026-07-24T03:23:39Z",
       "latestContributionAt": "2026-08-04T05:02:31Z"
+    },
+    {
+      "login": "amwps290",
+      "avatarUrl": "https://avatars.githubusercontent.com/u/18211479?v=4",
+      "profileUrl": "https://github.com/amwps290",
+      "commits": 8,
+      "mergedPullRequests": 8,
+      "firstContributionAt": "2026-07-21T05:32:24Z",
+      "latestContributionAt": "2026-07-31T14:31:51Z"
     },
     {
       "login": "guoyongchang",

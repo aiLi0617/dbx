@@ -34,6 +34,7 @@ import { applyParsedConnectionUrl, normalizeMongoConnectionString, parseConnecti
 import { buildOracleTnsConnectionString, normalizeOracleTnsAdminPath, parseOracleTnsConnectionString } from "@/lib/connection/oracleTnsConnection";
 import { parseConnectionDeepLink, type ConnectionDeepLinkDraft } from "@/lib/connection/connectionDeepLink";
 import { connectionUrlPlaceholder as getUrlPlaceholder } from "@/lib/connection/connectionPresentation";
+import { parseGaussdbHosts, serializeGaussdbHosts, type GaussdbHostEntry } from "@/lib/connection/gaussdbHosts";
 import { h2ConnectionModeForConfig, h2FileJdbcUrlWithPath, h2FilePathFromJdbcUrl, isH2SplitJdbcUrl, type H2ConnectionMode } from "@/lib/database/h2Connection";
 import { firstZooKeeperEndpoint, normalizeZooKeeperConnectString } from "@/lib/zookeeper/zookeeperConnection";
 import { setZooKeeperAuthScheme, zooKeeperAuthScheme as resolveZooKeeperAuthScheme, type ZooKeeperAuthScheme } from "@/lib/zookeeper/zookeeperConnectionOptions";
@@ -476,6 +477,36 @@ const gaussdbQuoteStyle = computed<GaussdbIdentifierQuoteStyle>({
   },
 });
 
+const gaussdbHostEntries = ref<GaussdbHostEntry[]>(parseGaussdbHosts(form.value.host, form.value.port));
+
+watch(
+  () => form.value.db_type,
+  (dbType) => {
+    if (dbType === "gaussdb") {
+      gaussdbHostEntries.value = parseGaussdbHosts(form.value.host, form.value.port);
+    }
+  },
+);
+
+watch(
+  () => [form.value.host, form.value.port] as const,
+  ([host, port]) => {
+    if (form.value.db_type === "gaussdb") {
+      gaussdbHostEntries.value = parseGaussdbHosts(host, port);
+    }
+  },
+);
+
+function addGaussdbHostEntry() {
+  const lastPort = gaussdbHostEntries.value.length > 0 ? gaussdbHostEntries.value[gaussdbHostEntries.value.length - 1].port : 5432;
+  gaussdbHostEntries.value.push({ host: "", port: lastPort });
+}
+
+function removeGaussdbHostEntry(idx: number) {
+  if (gaussdbHostEntries.value.length <= 1) return;
+  gaussdbHostEntries.value.splice(idx, 1);
+}
+
 function resizeNoteTextarea() {
   const textarea = noteTextareaRef.value;
   if (!textarea) return;
@@ -893,7 +924,7 @@ const driverProfiles: Record<
     label: "OceanBase Oracle Mode",
     icon: "oceanbase",
   },
-  goldendb: { type: "goldendb", port: 3306, user: "root", label: "GoldenDB", icon: "goldendb" },
+  goldendb: { type: "goldendb", port: 3306, user: "root", label: "金篆 GoldenDB", icon: "goldendb" },
   databend: { type: "databend", port: 8000, user: "databend", label: "Databend", icon: "databend" },
   tdsql: { type: "mysql", port: 3306, user: "root", label: "TDSQL", icon: "tdsql" },
   polardb: { type: "mysql", port: 3306, user: "root", label: "PolarDB", icon: "polardb" },
@@ -904,9 +935,9 @@ const driverProfiles: Record<
   vertica: { type: "vertica", port: 5433, user: "dbadmin", label: "Vertica", icon: "vertica" },
   firebird: { type: "firebird", port: 3050, user: "SYSDBA", label: "Firebird", icon: "firebird" },
   exasol: { type: "exasol", port: 8563, user: "sys", label: "Exasol", icon: "exasol" },
-  gbase: { type: "gbase", port: 5258, user: "gbasedbt", label: "GBase 8a", icon: "gbase" },
-  gbase8a: { type: "gbase", port: 5258, user: "gbasedbt", label: "GBase 8a", icon: "gbase" },
-  gbase8s: { type: "gbase", port: 9088, user: "gbasedbt", label: "GBase 8s", icon: "gbase" },
+  gbase: { type: "gbase", port: 5258, user: "gbasedbt", label: "南大通用 GBase 8a", icon: "gbase" },
+  gbase8a: { type: "gbase", port: 5258, user: "gbasedbt", label: "南大通用 GBase 8a", icon: "gbase" },
+  gbase8s: { type: "gbase", port: 9088, user: "gbasedbt", label: "南大通用 GBase 8s", icon: "gbase" },
   opengauss: {
     type: "opengauss",
     port: 5432,
@@ -917,11 +948,11 @@ const driverProfiles: Record<
   gaussdb: { type: "gaussdb", port: 5432, user: "gaussdb", label: "GaussDB", icon: "gaussdb" },
   kwdb: { type: "kwdb", port: 26257, user: "root", label: "KWDB", icon: "kwdb" },
   questdb: { type: "questdb", port: 8812, user: "questdb", label: "QuestDB", icon: "questdb" },
-  kingbase: { type: "kingbase", port: 54321, user: "system", label: "KingBase", icon: "kingbase" },
+  kingbase: { type: "kingbase", port: 54321, user: "system", label: "人大金仓 KingbaseES", icon: "kingbase" },
   highgo: { type: "highgo", port: 5866, user: "highgo", label: "瀚高 HighGo", icon: "highgo" },
   uxdb: { type: "uxdb", port: 52025, user: "uxdb", label: "优炫 UXDB", icon: "uxdb" },
   yashandb: { type: "yashandb", port: 1688, user: "sys", label: "崖山 YashanDB", icon: "yashandb" },
-  vastbase: { type: "vastbase", port: 5432, user: "vastbase", label: "Vastbase", icon: "vastbase" },
+  vastbase: { type: "vastbase", port: 5432, user: "vastbase", label: "海量 Vastbase", icon: "vastbase" },
   doris: { type: "mysql", port: 9030, user: "root", label: "Doris", icon: "doris", urlParams: "" },
   selectdb: {
     type: "mysql",
@@ -978,7 +1009,7 @@ const driverProfiles: Record<
     host: "https://www.googleapis.com/bigquery/v2",
   },
   kylin: { type: "kylin", port: 7070, user: "ADMIN", label: "Apache Kylin", icon: "kylin" },
-  sundb: { type: "sundb", port: 22000, user: "root", label: "SunDB", icon: "sundb" },
+  sundb: { type: "sundb", port: 22000, user: "root", label: "科蓝 SUNDB", icon: "sundb" },
   oscar: { type: "oscar", port: 2003, user: "SYSDBA", label: "神通 OSCAR", icon: "oscar" },
   jdbc: { type: "jdbc", port: 0, user: "", label: "JDBC", icon: "jdbc" },
   tdengine: { type: "tdengine", port: 6041, user: "root", label: "TDengine", icon: "tdengine" },
@@ -2440,7 +2471,7 @@ const dbOptions: DbOption[] = [
   { value: "questdb", label: "QuestDB" },
   { value: "tidb", label: "TiDB" },
   { value: "oceanbase", label: "OceanBase" },
-  { value: "goldendb", label: "GoldenDB" },
+  { value: "goldendb", label: "金篆 GoldenDB" },
   { value: "databend", label: "Databend" },
   { value: "tdsql", label: "TDSQL" },
   { value: "polardb", label: "PolarDB" },
@@ -2455,12 +2486,12 @@ const dbOptions: DbOption[] = [
   { value: "vertica", label: "Vertica" },
   { value: "firebird", label: "Firebird" },
   { value: "exasol", label: "Exasol" },
-  { value: "gbase", label: "GBase" },
-  { value: "kingbase", label: "KingBase" },
+  { value: "gbase", label: "南大通用 GBase" },
+  { value: "kingbase", label: "人大金仓 KingbaseES" },
   { value: "highgo", label: "瀚高 HighGo" },
   { value: "uxdb", label: "优炫 UXDB" },
   { value: "yashandb", label: "崖山 YashanDB" },
-  { value: "vastbase", label: "Vastbase" },
+  { value: "vastbase", label: "海量 Vastbase" },
   { value: "redshift", label: "Redshift" },
   { value: "cockroachdb", label: "CockroachDB" },
   { value: "h2", label: "H2" },
@@ -2475,7 +2506,7 @@ const dbOptions: DbOption[] = [
   { value: "cassandra", label: "Cassandra" },
   { value: "bigquery", label: "BigQuery" },
   { value: "kylin", label: "Kylin" },
-  { value: "sundb", label: "SunDB" },
+  { value: "sundb", label: "科蓝 SUNDB" },
   { value: "oscar", label: "神通 OSCAR" },
   { value: "xugu", label: "虚谷 XuguDB" },
   { value: "iotdb", label: "Apache IoTDB" },
@@ -3226,6 +3257,11 @@ function connectionConfigForSubmit(id: string, generatedName = ""): ConnectionCo
     if (!config.database) {
       throw new Error(t("connection.kingbaseDatabaseRequired"));
     }
+  }
+  if (config.db_type === "gaussdb") {
+    const serialized = serializeGaussdbHosts(gaussdbHostEntries.value);
+    config.host = serialized.host;
+    config.port = serialized.port;
   }
   if (isCloudflareD1Connection(config)) {
     normalizeCloudflareD1Connection(config);
@@ -4907,6 +4943,7 @@ function openExternalUrl(url: string) {
                     v-for="opt in category.options"
                     :key="opt.value"
                     type="button"
+                    :title="opt.label"
                     class="connection-db-picker-option group flex min-h-24 flex-col items-center justify-center gap-2 rounded-[4px] border bg-background/70 p-3 text-center transition hover:border-primary/40 hover:bg-muted/40 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     :class="selectedType === opt.value ? 'dbx-tile-selected shadow-sm' : 'border-border'"
                     :aria-pressed="selectedType === opt.value"
@@ -4916,7 +4953,9 @@ function openExternalUrl(url: string) {
                     <span class="flex h-10 w-10 items-center justify-center rounded-xl bg-muted/60 transition group-hover:bg-background">
                       <DatabaseIcon :db-type="iconTypeMap[opt.value]" class="h-6 w-6" />
                     </span>
-                    <span class="max-w-full truncate text-sm font-medium">{{ opt.label }}</span>
+                    <span class="flex min-h-8 max-w-full items-center justify-center">
+                      <span class="line-clamp-2 text-sm leading-4 font-medium">{{ opt.label }}</span>
+                    </span>
                   </button>
                 </div>
 
@@ -6157,7 +6196,26 @@ function openExternalUrl(url: string) {
                     </div>
                   </div>
 
-                  <div v-if="form.db_type !== 'oracle' || form.oracle_connection_type !== 'tns'" class="grid grid-cols-4 items-center gap-4">
+                  <!-- GaussDB: multi-host dynamic list -->
+                  <template v-if="form.db_type === 'gaussdb'">
+                    <div class="grid grid-cols-4 items-start gap-4">
+                      <Label :class="connectionLabelTopClass">{{ t("connection.host") }}</Label>
+                      <div class="col-span-3 space-y-2">
+                        <div v-for="(entry, idx) in gaussdbHostEntries" :key="idx" class="flex items-start gap-2">
+                          <Input v-model="entry.host" class="flex-1 min-w-0 break-all" placeholder="127.0.0.1" />
+                          <Input v-model.number="entry.port" type="number" class="w-24 shrink-0" />
+                          <Button type="button" variant="outline" size="icon" class="h-9 w-9 shrink-0 mt-0.5" :disabled="gaussdbHostEntries.length <= 1" @click="removeGaussdbHostEntry(idx)">
+                            <Trash2 class="h-4 w-4" />
+                          </Button>
+                        </div>
+                        <Button type="button" variant="outline" size="sm" class="mt-1" @click="addGaussdbHostEntry">
+                          <Plus class="mr-1 h-3.5 w-3.5" />
+                          {{ t("connection.addHost") }}
+                        </Button>
+                      </div>
+                    </div>
+                  </template>
+                  <div v-else-if="form.db_type !== 'oracle' || form.oracle_connection_type !== 'tns'" class="grid grid-cols-4 items-center gap-4">
                     <Label :class="connectionLabelClass">{{ form.db_type === "elasticsearch" && elasticsearchConnectionMode === "kibana" ? t("connection.elasticsearchKibanaHost") : t("connection.host") }}</Label>
                     <Input v-model="form.host" class="col-span-2" />
                     <Input v-model.number="form.port" type="number" class="col-span-1" @input="markSqlServerPortExplicit" />
