@@ -33,4 +33,13 @@ describe("cross-database table paste", () => {
     expect(runtimeSource).toMatch(/targetName,\s*tableComment: entry\.tableComment/);
     expect(runtimeSource).toContain("executeAsScript: duplicateTableStructureRequiresScript(structureSql)");
   });
+
+  it("loads Dameng column comments for sidebar duplicate and paste structure clone", () => {
+    expect(runtimeSource).toContain("collectDuplicateTableColumnComments");
+    expect(runtimeSource).toContain("async function loadDamengDuplicateColumnComments(");
+    expect(runtimeSource).toMatch(/databaseType === "dameng"[\s\S]*?loadDamengDuplicateColumnComments\([\s\S]*?node\.connectionId[\s\S]*?columnComments/);
+    expect(runtimeSource).toMatch(/if \(databaseType === "dameng"\) \{[\s\S]*?loadDamengDuplicateColumnComments\([\s\S]*?entry\.connectionId[\s\S]*?columnComments = loaded\.columnComments/);
+    expect(runtimeSource).toMatch(/tableComment: node\.comment,\s*columnComments,/);
+    expect(runtimeSource).toMatch(/tableComment: entry\.tableComment,\s*columnComments,/);
+  });
 });

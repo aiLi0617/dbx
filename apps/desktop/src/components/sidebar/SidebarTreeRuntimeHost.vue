@@ -116,6 +116,7 @@ import {
   buildCopyTableDataSql,
   buildEmptyTableSql,
   buildTruncateTableSql,
+  collectDuplicateTableColumnComments,
   duplicateTableStructureRequiresScript,
   supportsDropTableCascade,
   supportsTruncateTableCascade,
@@ -3058,6 +3059,19 @@ function isDuplicateStructureSource(node: TreeNode): node is DuplicateStructureS
   return node.type === "table" && !!node.connectionId && !!node.database;
 }
 
+/** Dameng CTAS does not copy comments; load column comments for COMMENT ON COLUMN. */
+async function loadDamengDuplicateColumnComments(connectionId: string, database: string, schema: string | undefined, sourceName: string, catalog?: string, sourceColumns?: ColumnInfo[]): Promise<{ columns?: ColumnInfo[]; columnComments: Array<{ name: string; comment: string }> }> {
+  let columns = sourceColumns;
+  if (!columns) {
+    try {
+      columns = await api.getColumns(connectionId, database, schema || "", sourceName, catalog);
+    } catch (error) {
+      console.warn(`Failed to load Dameng column comments for table clone: ${sourceName}`, error);
+    }
+  }
+  return { columns, columnComments: collectDuplicateTableColumnComments(columns ?? []) };
+}
+
 async function confirmDuplicateStructure() {
   const node = duplicateStructureSource.value || (isDuplicateStructureSource(activeNode.value) ? activeNode.value : null);
   const newName = duplicateTableName.value.trim();
@@ -3066,12 +3080,14 @@ async function confirmDuplicateStructure() {
   try {
     await connectionStore.ensureConnected(node.connectionId);
     const databaseType = databaseTypeForNode(node);
+    const columnComments = databaseType === "dameng" ? (await loadDamengDuplicateColumnComments(node.connectionId, node.database, node.schema, node.label, node.catalog)).columnComments : [];
     const sql = await buildDuplicateTableStructureSql({
       databaseType,
       schema: node.schema,
       sourceName: node.label,
       targetName: newName,
       tableComment: node.comment,
+      columnComments,
     });
     await executeTreeNodeSqlWithProductionGuard(node, sql, {
       database: node.database,
@@ -3112,13 +3128,21 @@ async function confirmPasteTable() {
     try {
       await connectionStore.ensureConnected(entry.connectionId);
       const databaseType = entry.connectionId ? effectiveDatabaseTypeForConnection(connectionStore.getConfig(entry.connectionId)) : undefined;
+      let sourceColumns: ColumnInfo[] | undefined;
       if (mode === "structure-and-data" || mode === "structure-only") {
+        let columnComments: Array<{ name: string; comment: string }> = [];
+        if (databaseType === "dameng") {
+          const loaded = await loadDamengDuplicateColumnComments(entry.connectionId, entry.database, entry.schema, entry.sourceName);
+          sourceColumns = loaded.columns;
+          columnComments = loaded.columnComments;
+        }
         const structureSql = await buildDuplicateTableStructureSql({
           databaseType,
           schema: entry.schema,
           sourceName: entry.sourceName,
           targetName,
           tableComment: entry.tableComment,
+          columnComments,
         });
         const structureExecuted = await executeTreeNodeSqlWithProductionGuard(entry, structureSql, {
           database: entry.database,
@@ -3133,7 +3157,9 @@ async function confirmPasteTable() {
         queueRefreshTarget(entry);
       }
       if (copyData) {
-        const sourceColumns = await api.getColumns(entry.connectionId, entry.database, entry.schema || "", entry.sourceName);
+        if (!sourceColumns) {
+          sourceColumns = await api.getColumns(entry.connectionId, entry.database, entry.schema || "", entry.sourceName);
+        }
         const dataCopyColumnOptions = tableDataCopyColumnOptions(databaseType, sourceColumns);
         if (dataCopyColumnOptions.columns.length === 0) {
           throw new Error("No writable columns available for table data copy.");
