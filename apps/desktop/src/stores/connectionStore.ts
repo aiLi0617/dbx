@@ -1011,6 +1011,7 @@ export const useConnectionStore = defineStore("connection", () => {
       sundb: "科蓝 SUNDB",
       oscar: "神通 OSCAR",
       influxdb: "InfluxDB",
+      victoriametrics: "VictoriaMetrics",
     };
 
     const profile = config.driver_profile || config.db_type;
@@ -2697,6 +2698,7 @@ export const useConnectionStore = defineStore("connection", () => {
         existing.label = config.name;
         existing.type = "connection";
         existing.connectionId = id;
+        existing.comment = config.note || null;
         existing.children = existing.children || [];
       } else {
         treeNodes.value.push({
@@ -2706,6 +2708,7 @@ export const useConnectionStore = defineStore("connection", () => {
           connectionId: id,
           isExpanded: false,
           children: [],
+          comment: config.note || null,
         });
       }
       return id;

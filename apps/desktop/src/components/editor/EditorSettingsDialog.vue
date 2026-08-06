@@ -4660,9 +4660,9 @@ onUnmounted(() => {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="comment-inline">{{ t("settings.sidebarObjectInfoModeCommentInline") }}</SelectItem>
                     <SelectItem value="comment-aligned">{{ t("settings.sidebarObjectInfoModeCommentAligned") }}</SelectItem>
                     <SelectItem value="comment-right">{{ t("settings.sidebarObjectInfoModeCommentRight") }}</SelectItem>
-                    <SelectItem value="comment-inline">{{ t("settings.sidebarObjectInfoModeCommentInline") }}</SelectItem>
                     <SelectItem value="size">{{ t("settings.sidebarObjectInfoModeSize") }}</SelectItem>
                     <SelectItem value="hidden">{{ t("settings.sidebarObjectInfoModeHidden") }}</SelectItem>
                   </SelectContent>
