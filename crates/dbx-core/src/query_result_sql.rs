@@ -1392,6 +1392,14 @@ fn top_level_sql_tokens(sql: &str) -> Vec<SqlToken> {
             continue;
         }
 
+        if ch == '#' {
+            i += 1;
+            while i < sql.len() && next_char(sql, i) != '\n' {
+                i += next_char(sql, i).len_utf8();
+            }
+            continue;
+        }
+
         if ch == '/' && next == Some('*') {
             i += 2;
             while i < sql.len() {
@@ -1404,6 +1412,15 @@ fn top_level_sql_tokens(sql: &str) -> Vec<SqlToken> {
                 i += current.len_utf8();
             }
             continue;
+        }
+
+        // PostgreSQL dollar-quoted bodies may contain arbitrary SQL keywords.
+        // Skip them before scanning for top-level clauses such as FOR UPDATE.
+        if ch == '$' {
+            if let Some(end) = skip_sql_dollar_quoted(sql, i) {
+                i = end;
+                continue;
+            }
         }
 
         if matches!(ch, '\'' | '"' | '`') {
@@ -1442,6 +1459,22 @@ fn top_level_sql_tokens(sql: &str) -> Vec<SqlToken> {
     }
 
     tokens
+}
+
+fn skip_sql_dollar_quoted(sql: &str, pos: usize) -> Option<usize> {
+    let tag_end_offset = sql.get(pos + 1..)?.find('$')?;
+    let tag_end = pos + 1 + tag_end_offset;
+    let tag = &sql[pos + 1..tag_end];
+    let valid_tag = tag.is_empty()
+        || (tag.chars().next().is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+            && tag.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_'));
+    if !valid_tag {
+        return None;
+    }
+
+    let delimiter = &sql[pos..=tag_end];
+    let content_start = tag_end + 1;
+    sql.get(content_start..)?.find(delimiter).map(|closing_offset| content_start + closing_offset + delimiter.len())
 }
 
 fn skip_sql_quoted(sql: &str, pos: usize, quote: char) -> usize {
@@ -2334,6 +2367,48 @@ WHERE u.id = picked.id;
 
         assert!(result.ok);
         assert_eq!(result.sql.unwrap(), "SELECT * FROM t WHERE deleted = 0 LIMIT 100;");
+    }
+
+    #[test]
+    fn locking_keywords_inside_postgres_dollar_quote_are_not_rewritten() {
+        let sql = "SELECT $$FOR UPDATE$$ AS message";
+        let paginated = build_paginated_query_sql(PaginatedQuerySqlOptions {
+            original_sql: sql.to_string(),
+            database_type: Some(DatabaseType::Postgres),
+            limit: 100,
+            offset: 0,
+        });
+        let counted = build_count_query_sql(CountQuerySqlOptions {
+            original_sql: sql.to_string(),
+            database_type: Some(DatabaseType::Postgres),
+        });
+
+        assert_eq!(paginated.sql.as_deref(), Some("SELECT $$FOR UPDATE$$ AS message LIMIT 100;"));
+        assert_eq!(
+            counted.sql.as_deref(),
+            Some("SELECT COUNT(*) AS dbx_total_rows FROM (SELECT $$FOR UPDATE$$ AS message) \"dbx_count\";")
+        );
+    }
+
+    #[test]
+    fn locking_keywords_inside_mysql_hash_comment_are_not_rewritten() {
+        let sql = "SELECT * FROM t\n# FOR UPDATE LIMIT 1";
+        let paginated = build_paginated_query_sql(PaginatedQuerySqlOptions {
+            original_sql: sql.to_string(),
+            database_type: Some(DatabaseType::Mysql),
+            limit: 100,
+            offset: 0,
+        });
+        let counted = build_count_query_sql(CountQuerySqlOptions {
+            original_sql: sql.to_string(),
+            database_type: Some(DatabaseType::Mysql),
+        });
+
+        assert_eq!(paginated.sql.as_deref(), Some("SELECT * FROM t\n# FOR UPDATE LIMIT 1\nLIMIT 100;"));
+        assert_eq!(
+            counted.sql.as_deref(),
+            Some("SELECT COUNT(*) AS dbx_total_rows FROM (SELECT * FROM t\n# FOR UPDATE LIMIT 1\n) `dbx_count`;")
+        );
     }
 
     #[test]
