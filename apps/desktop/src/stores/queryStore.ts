@@ -3599,6 +3599,16 @@ export const useQueryStore = defineStore("query", () => {
     return registerOpenTab(tab);
   }
 
+  function localizePluginWorkbenchTitles(resolveTitle: (pluginId: string, contributionId: string) => string | undefined): void {
+    for (const tab of tabs.value) {
+      if (tab.mode !== "plugin-workbench" || !tab.pluginWorkbench || tab.customTitle || pluginTabConnectionId(tab)) continue;
+      const localizedTitle = resolveTitle(tab.pluginWorkbench.pluginId, tab.pluginWorkbench.contributionId)?.trim();
+      if (!localizedTitle) continue;
+      const suffix = / \((\d+)\)$/.exec(tab.title)?.[0] || "";
+      tab.title = `${localizedTitle}${suffix}`;
+    }
+  }
+
   function openPluginFilesystem(pluginId: string, providerId: string, options: { title?: string; connectionId?: string; rootUri?: string; currentUri?: string; forceNew?: boolean } = {}) {
     if (!options.forceNew) {
       const existing = tabs.value.find((tab) => tab.mode === "plugin-filesystem" && tab.pluginFilesystem?.pluginId === pluginId && tab.pluginFilesystem?.providerId === providerId && tab.connectionId === (options.connectionId || ""));
@@ -9028,6 +9038,7 @@ export const useQueryStore = defineStore("query", () => {
     openMqttAdmin,
     openNacosAdmin,
     openPluginWorkbench,
+    localizePluginWorkbenchTitles,
     openPluginFilesystem,
     reconnectRestoredPluginTabs,
     openPluginConnection,
