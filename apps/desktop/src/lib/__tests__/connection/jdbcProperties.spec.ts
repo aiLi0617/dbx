@@ -16,8 +16,20 @@ describe("dialect-specific JDBC credential copying", () => {
     expect(buildConnectionUrlCopy({ ...base, password: 'pass";{}word' }, "jdbcUrlWithCredentials")).toBe('jdbc:sqlserver://db.example.com:1433;databaseName=app;user=user;password={pass";{}}word}');
   });
 
-  it("preserves literal percent escapes from externally supplied SQL Server URLs", () => {
-    expect(parseConnectionUrl("jdbc:sqlserver://db.example.com;user=admin;password=%21%25").password).toBe("%21%25");
+  it("preserves legacy percent-encoded SQL Server properties when importing", () => {
+    expect(parseConnectionUrl("jdbc:sqlserver://db.example.com;databaseName=main%20db;user=admin%40corp;password=s%40cret")).toMatchObject({
+      database: "main db",
+      username: "admin@corp",
+      password: "s@cret",
+    });
+  });
+
+  it("keeps percent escapes literal in braced SQL Server properties and copied URLs", () => {
+    const config = { ...base, database: "db%20name", username: "user%40corp", password: "%21%25" };
+    const url = buildConnectionUrlCopy(config, "jdbcUrlWithCredentials")!;
+    expect(url).toContain("databaseName={db%20name};user={user%40corp};password={%21%25}");
+    expect(parseConnectionUrl(url)).toMatchObject({ database: config.database, username: config.username, password: config.password });
+    expect(parseConnectionUrl("jdbc:sqlserver://db.example.com;user=admin;password={%21%25}").password).toBe("%21%25");
   });
 
   it("quotes database names and preserves quoted additional properties", () => {
@@ -45,6 +57,12 @@ describe("dialect-specific JDBC credential copying", () => {
     expect(buildConnectionUrlCopy(config, "jdbcUrlWithCredentials")).toBeNull();
     expect(connectionUrlCopyFormats(config)).not.toContain("jdbcUrlWithCredentials");
     expect(buildConnectionUrlCopy(config, "jdbcUrl")).not.toBeNull();
+  });
+
+  it("checks the normalized Teradata username for unsafe boundary quotes", () => {
+    const config = { ...base, db_type: "teradata" as const, username: " 'admin' ", password: "" };
+    expect(buildConnectionUrlCopy(config, "jdbcUrlWithCredentials")).toBeNull();
+    expect(connectionUrlCopyFormats(config)).not.toContain("jdbcUrlWithCredentials");
   });
 
   it.each(["oracle", "saphana", "exasol", "snowflake"] as const)("preserves existing encoding for unverified %s driver", (db_type) => {
@@ -76,5 +94,45 @@ describe("JDBC secret redaction", () => {
     expect(buildConnectionUrlCopy(config, "jdbcUrl")).toContain("***");
     expect(buildConnectionUrlCopy(config, "jdbcUrl")).not.toContain("tail");
     expect(connectionUrlCopyFormats(config)).toContain("jdbcUrlWithCredentials");
+  });
+
+  it.each(["clientKeyPassword", "keyStoreSecret", "trustStorePassword"])("redacts SQL Server %s in copied URLs", (key) => {
+    const config = { ...base, username: "", password: "", url_params: `${key}={head;tail}` };
+    const jdbcUrl = buildConnectionUrlCopy(config, "jdbcUrl")!;
+    expect(jdbcUrl).toContain(`${key}=***`);
+    expect(jdbcUrl).not.toContain("head;tail");
+    const standardUrl = buildConnectionUrlCopy(config, "url")!;
+    expect(standardUrl).toContain(`${key}=***`);
+    expect(standardUrl).not.toContain("tail");
+    expect(buildConnectionUrlCopy(config, "jdbcUrlWithCredentials")).toContain("head;tail");
+    expect(connectionUrlCopyFormats(config)).toContain("jdbcUrlWithCredentials");
+
+    const explicit = { ...config, db_type: "jdbc" as const, host: "", url_params: "", connection_string: `jdbc:sqlserver://db.example.com;${key}={head;tail}` };
+    expect(buildConnectionUrlCopy(explicit, "url")).toBe(`jdbc:sqlserver://db.example.com;${key}=***`);
+    expect(buildConnectionUrlCopy(explicit, "jdbcUrl")).toBe(`jdbc:sqlserver://db.example.com;${key}=***`);
+    expect(connectionUrlCopyFormats(explicit)).toContain("urlWithPassword");
+  });
+
+  it("preserves SQL Server query delimiters around a redacted braced value", () => {
+    const config = { ...base, username: "", password: "", url_params: "applicationName={DBX; Client}&TRUSTSTOREPASSWORD={head;tail}&encrypt=false" };
+    expect(buildConnectionUrlCopy(config, "url")).toContain("?applicationName={DBX; Client}&TRUSTSTOREPASSWORD=***&encrypt=false");
+    expect(buildConnectionUrlCopy(config, "jdbcUrl")).toContain(";applicationName={DBX; Client};TRUSTSTOREPASSWORD=***;encrypt=false");
+  });
+
+  it("leaves a non-secret SQL Server standard URL query unchanged", () => {
+    const config = { ...base, username: "", password: "", url_params: "encrypt&applicationName=DBX" };
+    expect(buildConnectionUrlCopy(config, "url")).toBe("mssql://db.example.com:1433/app?encrypt&applicationName=DBX");
+  });
+
+  it("preserves valueless SQL Server query flags while redacting a later secret", () => {
+    const config = { ...base, username: "", password: "", url_params: "encrypt&trustStorePassword={head;tail}&applicationName=DBX" };
+    expect(buildConnectionUrlCopy(config, "url")).toBe("mssql://db.example.com:1433/app?encrypt&trustStorePassword=***&applicationName=DBX");
+  });
+
+  it("keeps a malformed non-secret standard query but fails closed on an ambiguous secret", () => {
+    const withoutSecret = { ...base, username: "", password: "", url_params: "encrypt&applicationName={open" };
+    expect(buildConnectionUrlCopy(withoutSecret, "url")).toBe("mssql://db.example.com:1433/app?encrypt&applicationName={open");
+    const withSecret = { ...withoutSecret, url_params: "encrypt&applicationName={open;trustStorePassword=hidden" };
+    expect(buildConnectionUrlCopy(withSecret, "url")).toBe("mssql://db.example.com:1433/app?***");
   });
 });

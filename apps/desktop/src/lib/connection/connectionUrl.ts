@@ -465,12 +465,12 @@ function parseJdbcSqlServerUrl(source: string): ParsedConnectionUrl | null {
   const urlParams: string[] = [];
   const properties = parseJdbcProperties(match[3] || "", "sqlserver");
   if (!properties) throw new Error("Invalid SQL Server JDBC properties");
-  for (const { key, value, raw: part } of properties) {
+  for (const { key, value, raw: part, quoted } of properties) {
     const normalizedKey = key.toLowerCase();
-    if (normalizedKey === "databasename" || normalizedKey === "database" || normalizedKey === "user") {
-      props.set(normalizedKey, value);
-    } else if (normalizedKey === "password") {
-      props.set(normalizedKey, value);
+    // Braces are literal JDBC values; unquoted %xx values retain DBX's old import behavior.
+    const importedValue = quoted ? value : decodeUrlPart(value);
+    if (normalizedKey === "databasename" || normalizedKey === "database" || normalizedKey === "user" || normalizedKey === "password") {
+      props.set(normalizedKey, importedValue);
     } else {
       urlParams.push(part);
     }

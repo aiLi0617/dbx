@@ -32,6 +32,13 @@ describe("connectionUrlCopyFormats", () => {
     expect(formats).toEqual(["url", "jdbcUrl", "hostPort", "dsn", "psqlCommand"]);
   });
 
+  it("offers an unredacted URL when its query contains the only secret", () => {
+    const search = config({ db_type: "elasticsearch", host: "search.example.com", port: 9200, username: "", password: "", database: "", url_params: "token=abc&pretty" });
+    expect(buildConnectionUrlCopy(search, "url")).toBe("http://search.example.com:9200?token=***&pretty");
+    expect(buildConnectionUrlCopy(search, "urlWithPassword")).toBe("http://search.example.com:9200?token=abc&pretty");
+    expect(connectionUrlCopyFormats(search)).toContain("urlWithPassword");
+  });
+
   it("hides everything for file-based connections", () => {
     expect(connectionSupportsUrlCopy(config({ db_type: "sqlite", host: "/data/app.db", port: 0 }))).toBe(false);
     expect(connectionUrlCopyFormats(config({ db_type: "duckdb", host: "/data/app.duckdb", port: 0 }))).toEqual([]);
@@ -129,6 +136,14 @@ describe("buildConnectionUrlCopy standard URL", () => {
     // even though no password field is stored.
     expect(connectionUrlCopyFormats(jdbcConfig)).toEqual(["url", "urlWithPassword"]);
   });
+
+  it("redacts an explicit URL with a password but no username", () => {
+    const redis = config({ db_type: "redis", host: "cache.example.com", port: 6379, username: "", password: "", database: "0", connection_string: "redis://:synthetic-secret@cache.example.com:6379/0" });
+    expect(buildConnectionUrlCopy(redis, "url")).toBe("redis://:***@cache.example.com:6379/0");
+    expect(buildConnectionUrlCopy(redis, "urlWithPassword")).toBe(redis.connection_string);
+    expect(connectionUrlCopyFormats(redis)).toContain("urlWithPassword");
+    expect(buildConnectionUrlCopy({ ...redis, connection_string: "redis://cache.example.com:6379/0" }, "url")).toBe("redis://cache.example.com:6379/0");
+  });
 });
 
 describe("buildConnectionUrlCopy JDBC URL", () => {
@@ -153,6 +168,15 @@ describe("buildConnectionUrlCopy JDBC URL", () => {
     const text = buildConnectionUrlCopy(config({ db_type: "mysql", port: 3306, password }), "jdbcUrlWithCredentials");
     expect(text).toBe("jdbc:mysql://db.example.com:3306/appdb?user=app_user&password=%2525%2540%255E");
     expect(parseConnectionUrl(text ?? "").password).toBe(password);
+  });
+
+  it("redacts a percent-encoded password property name accepted by the MySQL importer", () => {
+    const mysql = config({ db_type: "mysql", port: 3306, username: "", password: "", url_params: "pass%77ord=synthetic-secret&connectTimeout=5000" });
+    const jdbcWithCredentials = buildConnectionUrlCopy(mysql, "jdbcUrlWithCredentials")!;
+    expect(parseConnectionUrl(jdbcWithCredentials).password).toBe("synthetic-secret");
+    expect(buildConnectionUrlCopy(mysql, "url")).toContain("pass%77ord=***&connectTimeout=5000");
+    expect(buildConnectionUrlCopy(mysql, "jdbcUrl")).toContain("pass%77ord=***&connectTimeout=5000");
+    expect(connectionUrlCopyFormats(mysql)).toContain("jdbcUrlWithCredentials");
   });
 
   it("adds driver-specific ssl properties", () => {
@@ -219,6 +243,19 @@ describe("buildConnectionUrlCopy host:port, DSN and psql", () => {
     expect(buildConnectionUrlCopy(config({}), "dsnWithPassword")).toBe("host=db.example.com port=5432 user=app_user password=secret dbname=appdb");
     expect(buildConnectionUrlCopy(config({ password: "has space" }), "dsnWithPassword")).toContain("password='has space'");
     expect(buildConnectionUrlCopy(config({ password: "" }), "dsnWithPassword")).toBe(buildConnectionUrlCopy(config({ password: "" }), "dsn"));
+  });
+
+  it.each(["password", "pass%77ord", "sslpassword", "oauth_client_secret"])("redacts a %s supplied only through DSN parameters", (key) => {
+    const postgres = config({ password: "", url_params: `application_name=svc&${key}=synthetic-secret&sslmode=require` });
+    expect(buildConnectionUrlCopy(postgres, "dsn")).toBe(`host=db.example.com port=5432 user=app_user dbname=appdb application_name=svc ${key}=*** sslmode=require`);
+    expect(buildConnectionUrlCopy(postgres, "dsnWithPassword")).toBe(`host=db.example.com port=5432 user=app_user dbname=appdb application_name=svc ${key}=synthetic-secret sslmode=require`);
+    expect(connectionUrlCopyFormats(postgres)).toContain("dsnWithPassword");
+  });
+
+  it("redacts both stored and parameter passwords in the plain DSN", () => {
+    const postgres = config({ url_params: "password=secondary-secret" });
+    expect(buildConnectionUrlCopy(postgres, "dsn")).toBe("host=db.example.com port=5432 user=app_user dbname=appdb password=***");
+    expect(buildConnectionUrlCopy(postgres, "dsnWithPassword")).toBe("host=db.example.com port=5432 user=app_user password=secret dbname=appdb password=secondary-secret");
   });
 
   it("builds a psql command without embedding the password", () => {
