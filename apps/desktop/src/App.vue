@@ -206,7 +206,11 @@ watch(appLocale, async (locale) => {
   try {
     const registry = createFrontendPluginRegistry(await api.listPlugins(), locale);
     if (generation !== pluginTitleLocaleGeneration) return;
-    queryStore.localizePluginWorkbenchTitles((pluginId, contributionId) => registry.findUiContribution(pluginId, contributionId)?.contribution.label);
+    queryStore.localizePluginTabTitles((pluginId, contributionId, surface) =>
+      surface === "filesystem"
+        ? registry.listFilesystemProviders().find((entry) => entry.plugin.manifest.id === pluginId && entry.contribution.id === contributionId)?.contribution.label
+        : registry.findUiContribution(pluginId, contributionId)?.contribution.label
+    );
   } catch (error) {
     console.warn("Failed to refresh localized plugin tab titles", error);
   }
