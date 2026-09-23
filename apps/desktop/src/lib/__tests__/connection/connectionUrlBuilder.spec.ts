@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildConnectionUrlCopy, CONNECTION_URL_COPY_WITH_PASSWORD_FORMATS, connectionSupportsUrlCopy, connectionUrlCopyFormats, type ConnectionUrlCopyConfig } from "@/lib/connection/connectionUrlBuilder";
+import { parseConnectionUrl } from "@/lib/connection/connectionUrl";
 
 function config(overrides: Partial<ConnectionUrlCopyConfig>): ConnectionUrlCopyConfig {
   return {
@@ -14,6 +15,9 @@ function config(overrides: Partial<ConnectionUrlCopyConfig>): ConnectionUrlCopyC
     ...overrides,
   };
 }
+
+const ASCII_SYMBOLS = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
+const ENCODED_ASCII_SYMBOLS = "%21%22%23%24%25%26%27%28%29%2A%2B%2C-.%2F%3A%3B%3C%3D%3E%3F%40%5B%5C%5D%5E_%60%7B%7C%7D~";
 
 describe("connectionUrlCopyFormats", () => {
   it("lists all formats for a PostgreSQL connection with a stored password", () => {
@@ -62,6 +66,19 @@ describe("buildConnectionUrlCopy standard URL", () => {
   it("percent-encodes special characters in credentials and database", () => {
     const text = buildConnectionUrlCopy(config({ username: "user@corp", password: "p@ss:w/ord#", database: "app db" }), "urlWithPassword");
     expect(text).toBe("postgresql://user%40corp:p%40ss%3Aw%2Ford%23@db.example.com:5432/app%20db");
+  });
+
+  it("round-trips every ASCII symbol in URL credentials", () => {
+    const text = buildConnectionUrlCopy(config({ password: ASCII_SYMBOLS }), "urlWithPassword");
+    expect(text).toBe(`postgresql://app_user:${ENCODED_ASCII_SYMBOLS}@db.example.com:5432/appdb`);
+    expect(decodeURIComponent(ENCODED_ASCII_SYMBOLS)).toBe(ASCII_SYMBOLS);
+  });
+
+  it("preserves credentials that already look percent-encoded", () => {
+    const password = "%25%40%5E";
+    const text = buildConnectionUrlCopy(config({ password }), "urlWithPassword");
+    expect(text).toBe("postgresql://app_user:%2525%2540%255E@db.example.com:5432/appdb");
+    expect(parseConnectionUrl(text ?? "").password).toBe(password);
   });
 
   it("appends url_params and adds sslmode when ssl is enabled", () => {
@@ -118,6 +135,30 @@ describe("buildConnectionUrlCopy JDBC URL", () => {
   it("builds a generic PostgreSQL JDBC URL", () => {
     expect(buildConnectionUrlCopy(config({}), "jdbcUrl")).toBe("jdbc:postgresql://db.example.com:5432/appdb");
     expect(buildConnectionUrlCopy(config({}), "jdbcUrlWithCredentials")).toBe("jdbc:postgresql://db.example.com:5432/appdb?user=app_user&password=secret");
+  });
+
+  it.each([
+    { db_type: "mysql", port: 3306 },
+    { db_type: "postgres", port: 5432 },
+    { db_type: "oracle", port: 1521 },
+    { db_type: "sqlserver", port: 1433 },
+    { db_type: "saphana", port: 30015 },
+    { db_type: "teradata", port: 1025 },
+    { db_type: "exasol", port: 8563 },
+    { db_type: "snowflake", port: 443 },
+  ] as const)("round-trips every ASCII symbol in $db_type JDBC credentials", ({ db_type, port }) => {
+    const text = buildConnectionUrlCopy(config({ db_type, port, password: ASCII_SYMBOLS }), "jdbcUrlWithCredentials");
+    expect(text).toContain(`password=${ENCODED_ASCII_SYMBOLS}`);
+    const encodedPassword = text?.match(/(?:[?&;,:]|^)password=([^&;,:]*)/i)?.[1];
+    expect(encodedPassword).toBe(ENCODED_ASCII_SYMBOLS);
+    expect(decodeURIComponent(encodedPassword ?? "")).toBe(ASCII_SYMBOLS);
+  });
+
+  it("does not double-decode percent-looking MySQL JDBC credentials", () => {
+    const password = "%25%40%5E";
+    const text = buildConnectionUrlCopy(config({ db_type: "mysql", port: 3306, password }), "jdbcUrlWithCredentials");
+    expect(text).toBe("jdbc:mysql://db.example.com:3306/appdb?user=app_user&password=%2525%2540%255E");
+    expect(parseConnectionUrl(text ?? "").password).toBe(password);
   });
 
   it("adds driver-specific ssl properties", () => {

@@ -177,16 +177,25 @@ function shouldAppendPort(config: ConnectionUrlCopyConfig): boolean {
   return Number(config.port) > 0 && !host.includes(",") && !host.includes("://");
 }
 
+/**
+ * RFC 3986 component encoding for credentials. `encodeURIComponent` leaves
+ * `!'()*` unescaped, so encode those too; only unreserved characters remain
+ * literal and every encoded credential can be decoded back byte-for-byte.
+ */
+function encodeCredential(value: string): string {
+  return encodeURIComponent(value).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
 function buildUserInfo(config: ConnectionUrlCopyConfig, includePassword: boolean): string {
   const user = config.username?.trim() ?? "";
   const password = config.password ?? "";
   if (includePassword) {
-    if (user && password) return `${encodeURIComponent(user)}:${encodeURIComponent(password)}@`;
-    if (user) return `${encodeURIComponent(user)}@`;
-    if (password) return `:${encodeURIComponent(password)}@`;
+    if (user && password) return `${encodeCredential(user)}:${encodeCredential(password)}@`;
+    if (user) return `${encodeCredential(user)}@`;
+    if (password) return `:${encodeCredential(password)}@`;
     return "";
   }
-  return user ? `${encodeURIComponent(user)}@` : "";
+  return user ? `${encodeCredential(user)}@` : "";
 }
 
 /** Mirrors the sidebar tooltip redaction so shared strings never leak secrets. */
@@ -276,8 +285,8 @@ function jdbcCredentialParams(config: ConnectionUrlCopyConfig, withCredentials: 
   if (!withCredentials) return [];
   const params: string[] = [];
   const user = config.username?.trim() ?? "";
-  if (user) params.push(`user=${encodeURIComponent(user)}`);
-  if (config.password) params.push(`password=${encodeURIComponent(config.password)}`);
+  if (user) params.push(`user=${encodeCredential(user)}`);
+  if (config.password) params.push(`password=${encodeCredential(config.password)}`);
   return params;
 }
 
