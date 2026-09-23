@@ -270,6 +270,7 @@ import {
   resolveSettingsSearchEntries,
   searchSettings,
   toolbarVisibilityItemLabel,
+  visibleToolbarVisibilityItems,
   type SettingsCategory,
   type SettingsSearchEntry,
   type ToolbarVisibilityItem,
@@ -282,6 +283,7 @@ import { buildFontFamilyOptions, displayFontFamily, isPresetFontFamily, loadSyst
 import { buildAppSupportInfoRows, formatAppSupportInfoForClipboard, type AppSupportInfoLabels } from "@/lib/app/supportInfo";
 import { useUiFontFamilyPreview } from "@/composables/useUiFontFamilyPreview";
 import { useMeasuredWidth } from "@/composables/useMeasuredWidth";
+import { createDelayedPreview } from "@/lib/common/delayedPreview";
 import { DateTimePatterns, normalizeSupportedDateTimePattern } from "@/lib/dataGrid/columnFormatter";
 import { MAX_RESULT_PAGE_SIZE, MIN_RESULT_PAGE_SIZE } from "@/lib/dataGrid/paginationPageSize";
 import { MAX_QUERY_RESULT_MAX_ROWS } from "@/lib/dataGrid/queryResultRowLimit";
@@ -304,25 +306,54 @@ const promptTemplateStore = usePromptTemplateStore();
 const tunnelProfileStore = useTunnelProfileStore();
 const { isDark, themeMode, themePalette, activeCustomUiColors, cornerStyle, setThemeMode, setThemePalette, previewThemePalette, clearThemePalettePreview, setCustomUiColors, resetCustomUiColors, setCornerStyle } = useTheme();
 const { previewUiFontFamily, clearUiFontFamilyPreview } = useUiFontFamilyPreview();
+const APPEARANCE_POINTER_PREVIEW_DELAY_MS = 80;
+const themePaletteOptionPreview = createDelayedPreview<AppThemePalette>(previewThemePalette, APPEARANCE_POINTER_PREVIEW_DELAY_MS);
+const uiFontOptionPreview = createDelayedPreview<string>(previewUiFontFamily, APPEARANCE_POINTER_PREVIEW_DELAY_MS);
+const localeOptionPreview = createDelayedPreview<Locale>((value) => void previewLocale(value), APPEARANCE_POINTER_PREVIEW_DELAY_MS);
 
 function updateCustomUiColor(key: keyof AppCustomUiColors, value: string) {
   setCustomUiColors({ ...activeCustomUiColors.value, [key]: value });
 }
 
 function onThemePaletteSelect(value: unknown) {
-  if (typeof value === "string") setThemePalette(value as AppThemePalette);
+  if (typeof value !== "string") return;
+  themePaletteOptionPreview.cancel();
+  setThemePalette(value as AppThemePalette);
 }
 
 function onThemePaletteOpenChange(open: boolean) {
-  if (!open) clearThemePalettePreview();
+  if (!open) clearThemePaletteOptionPreview();
+}
+
+function scheduleThemePalettePreview(value: AppThemePalette) {
+  themePaletteOptionPreview.schedule(value);
+}
+
+function previewThemePaletteOption(value: AppThemePalette) {
+  themePaletteOptionPreview.runNow(value);
+}
+
+function clearThemePaletteOptionPreview() {
+  themePaletteOptionPreview.cancel();
+  clearThemePalettePreview();
+}
+
+function scheduleUiFontOptionPreview(value: string) {
+  uiFontOptionPreview.schedule(value);
 }
 
 function previewUiFontOption(value: string | undefined) {
-  if (value) previewUiFontFamily(value);
+  if (value) uiFontOptionPreview.runNow(value);
 }
 
 function restoreUiFontFamilyPreview() {
+  uiFontOptionPreview.cancel();
   previewUiFontFamily(editUiFontFamily.value);
+}
+
+function clearUiFontOptionPreview() {
+  uiFontOptionPreview.cancel();
+  clearUiFontFamilyPreview();
 }
 
 function onUiFontFamilyOpenChange(open: boolean) {
@@ -334,10 +365,15 @@ function onUiFontFamilyOpenChange(open: boolean) {
 }
 
 function previewLocaleOption(locale: Locale) {
-  void previewLocale(locale);
+  localeOptionPreview.runNow(locale);
+}
+
+function scheduleLocaleOptionPreview(locale: Locale) {
+  localeOptionPreview.schedule(locale);
 }
 
 function restoreLocaleOptionPreview() {
+  localeOptionPreview.cancel();
   void restoreLocalePreview();
 }
 
@@ -562,6 +598,7 @@ const showThemeCustomizer = ref(false);
 const showDataGridTypeColorScheme = ref(false);
 const editExecuteMode = ref(settingsStore.editorSettings.executeMode);
 const editDefaultTransactionMode = ref(settingsStore.editorSettings.defaultTransactionMode);
+const editKeepExplicitTransactionInAutoCommit = ref(settingsStore.editorSettings.keepExplicitTransactionInAutoCommit);
 const editShortcuts = ref(normalizeShortcutSettings(settingsStore.editorSettings.shortcuts));
 function translateWithExecuteShortcut(key: string): string {
   return t(key, { shortcut: formatShortcutDisplay(editShortcuts.value.executeSql) });
@@ -788,7 +825,8 @@ const editExportRowLimit = ref(settingsStore.editorSettings.exportRowLimit);
 const editQueryExportKeysetOptimizationEnabled = ref(settingsStore.editorSettings.queryExportKeysetOptimizationEnabled);
 const editUpdateDownloadSource = ref<UpdateDownloadSource>(settingsStore.editorSettings.updateDownloadSource);
 const editToolbarItems = ref({ ...settingsStore.editorSettings.toolbarItems });
-const toolbarVisibilityItems = TOOLBAR_VISIBILITY_ITEMS;
+// Desktop-only toolbar buttons (always-on-top) can never render in the Web build, so their switches stay out of the Web settings dialog.
+const toolbarVisibilityItems = computed(() => visibleToolbarVisibilityItems(TOOLBAR_VISIBILITY_ITEMS, isWeb));
 function getToolbarVisibilityItemLabel(item: ToolbarVisibilityItem): string {
   return toolbarVisibilityItemLabel(item, t);
 }
@@ -930,6 +968,7 @@ function currentEditorSettingsDraft(): EditorSettingsDraft {
     activeCustomThemeId: editActiveCustomThemeId.value,
     executeMode: editExecuteMode.value,
     defaultTransactionMode: editDefaultTransactionMode.value,
+    keepExplicitTransactionInAutoCommit: editKeepExplicitTransactionInAutoCommit.value,
     executeAllOnBlankLine: editExecuteAllOnBlankLine.value,
     showExecutionTargetPicker: editShowExecutionTargetPicker.value,
     showStatementRunButtons: editShowStatementRunButtons.value,
@@ -1571,6 +1610,7 @@ function syncEditorSettingsDraftFromStore() {
   editActiveCustomThemeId.value = settingsStore.editorSettings.activeCustomThemeId;
   editExecuteMode.value = settingsStore.editorSettings.executeMode;
   editDefaultTransactionMode.value = settingsStore.editorSettings.defaultTransactionMode;
+  editKeepExplicitTransactionInAutoCommit.value = settingsStore.editorSettings.keepExplicitTransactionInAutoCommit;
   editExecuteAllOnBlankLine.value = settingsStore.editorSettings.executeAllOnBlankLine;
   editShowExecutionTargetPicker.value = settingsStore.editorSettings.showExecutionTargetPicker;
   editShowStatementRunButtons.value = settingsStore.editorSettings.showStatementRunButtons;
@@ -1815,6 +1855,7 @@ const editorSettingsDraftRefs: EditorSettingsDraftRefMap = {
   clickTableNavigationTarget: editClickTableNavigationTarget,
   completionTriggerMode: editCompletionTriggerMode,
   defaultTransactionMode: editDefaultTransactionMode,
+  keepExplicitTransactionInAutoCommit: editKeepExplicitTransactionInAutoCommit,
   tableColumnTemplateFields: editTableColumnTemplateRows,
 };
 
@@ -1853,8 +1894,8 @@ watch(
       editSidebarTablePageSize.value = settingsStore.desktopSettings.sidebar_table_page_size ?? DEFAULT_SIDEBAR_TABLE_PAGE_SIZE;
     } else {
       historyRetention.discard();
-      clearThemePalettePreview();
-      clearUiFontFamilyPreview();
+      clearThemePaletteOptionPreview();
+      clearUiFontOptionPreview();
       restoreLocaleOptionPreview();
     }
   },
@@ -1865,8 +1906,8 @@ watch(
   () => settingsStore.settingsPageActive,
   (active) => {
     if (isSettingsPage.value && !active) {
-      clearThemePalettePreview();
-      clearUiFontFamilyPreview();
+      clearThemePaletteOptionPreview();
+      clearUiFontOptionPreview();
       restoreLocaleOptionPreview();
     }
   },
@@ -2040,7 +2081,18 @@ const hasBlockingShortcutConflicts = computed(() => {
   return hasShortcutConflicts.value || hasSqlShortcutConflicts.value;
 });
 const hasBlockingFormatterConfig = computed(() => activeSettingsTab.value === "formatter" && !sqlFormatterConfigValid.value);
-const hasBlockingQueryResultRowLimit = computed(() => editQueryResultMaxRowsEnabled.value && editQueryResultMaxRows.value < editPageSize.value);
+// 上限小于每页行数时该组合一定不会生效，提示与 aria-invalid 始终跟随这一事实。
+const queryResultRowLimitViolated = computed(() => editQueryResultMaxRowsEnabled.value && editQueryResultMaxRows.value < editPageSize.value);
+// 但只有用户在本对话框里动过相关草稿时才拦截「应用」：结果网格右下角的「设为默认」
+// 可以在不改动本对话框的情况下先落盘 pageSize，若仍然拦截，用户只想换字体/主题也会
+// 被永久禁用的「应用」按钮挡住（issue #9994）。与上方快捷键冲突的判定口径保持一致。
+const queryResultRowLimitDraftTouched = computed(
+  () =>
+    editQueryResultMaxRowsEnabled.value !== editEditorSettingsBase.value.queryResultMaxRowsEnabled ||
+    normalizeQueryResultMaxRowsDraft(editQueryResultMaxRows.value) !== normalizeQueryResultMaxRowsDraft(editEditorSettingsBase.value.queryResultMaxRows) ||
+    normalizeTableOpenPageSizeDraft(editPageSize.value) !== normalizeTableOpenPageSizeDraft(editEditorSettingsBase.value.pageSize),
+);
+const hasBlockingQueryResultRowLimit = computed(() => queryResultRowLimitViolated.value && queryResultRowLimitDraftTouched.value);
 const hasApplyBlocker = computed(() => historyRetention.invalid.value || historyRetentionSaving.value || hasBlockingShortcutConflicts.value || hasBlockingFormatterConfig.value || hasBlockingQueryResultRowLimit.value);
 
 function hasChanges(): boolean {
@@ -2159,6 +2211,7 @@ function resetDefaultsForTab(tab: SettingsCategory) {
     editFontSize.value = DEFAULT_EDITOR_SETTINGS.fontSize;
     editExecuteMode.value = DEFAULT_EDITOR_SETTINGS.executeMode;
     editDefaultTransactionMode.value = DEFAULT_EDITOR_SETTINGS.defaultTransactionMode;
+    editKeepExplicitTransactionInAutoCommit.value = DEFAULT_EDITOR_SETTINGS.keepExplicitTransactionInAutoCommit;
     editExecuteAllOnBlankLine.value = DEFAULT_EDITOR_SETTINGS.executeAllOnBlankLine;
     editShowExecutionTargetPicker.value = DEFAULT_EDITOR_SETTINGS.showExecutionTargetPicker;
     editShowStatementRunButtons.value = DEFAULT_EDITOR_SETTINGS.showStatementRunButtons;
@@ -2310,6 +2363,7 @@ function resetAllDefaults() {
   editActiveCustomThemeId.value = DEFAULT_EDITOR_SETTINGS.activeCustomThemeId;
   editExecuteMode.value = DEFAULT_EDITOR_SETTINGS.executeMode;
   editDefaultTransactionMode.value = DEFAULT_EDITOR_SETTINGS.defaultTransactionMode;
+  editKeepExplicitTransactionInAutoCommit.value = DEFAULT_EDITOR_SETTINGS.keepExplicitTransactionInAutoCommit;
   editExecuteAllOnBlankLine.value = DEFAULT_EDITOR_SETTINGS.executeAllOnBlankLine;
   editShowExecutionTargetPicker.value = DEFAULT_EDITOR_SETTINGS.showExecutionTargetPicker;
   editShowStatementRunButtons.value = DEFAULT_EDITOR_SETTINGS.showStatementRunButtons;
@@ -2584,7 +2638,7 @@ function onTableFontFamilyChange(v: any) {
 function onUiFontFamilyChange(v: any) {
   if (typeof v === "string") {
     editUiFontFamily.value = v;
-    previewUiFontFamily(v);
+    uiFontOptionPreview.runNow(v);
   }
 }
 
@@ -2650,7 +2704,9 @@ function onDeleteConnectionTabHandlingModeChange(v: any) {
 }
 
 function onLocaleChange(v: any) {
-  if (typeof v === "string") void setLocale(v as Locale);
+  if (typeof v !== "string") return;
+  localeOptionPreview.cancel();
+  void setLocale(v as Locale);
 }
 
 function onUiScaleChange(value: unknown) {
@@ -2858,7 +2914,7 @@ const settingsCategoryNav = computed<{ value: SettingsCategory; label: string }[
   { value: "formatter", label: t("settings.sqlFormatterTab") },
   { value: "navigation", label: t("settings.navigationTab") },
   { value: "data", label: t("settings.dataTab") },
-  ...(isWeb ? [] : [{ value: "backups" as const, label: t("databaseBackup.title") }]),
+  { value: "backups" as const, label: t("databaseBackup.title") },
   { value: "tunnels", label: t("settings.tunnelsTab") },
   { value: "shortcuts", label: t("settings.shortcutsTab") },
   { value: "snippets", label: t("settings.snippetsTab") },
@@ -4237,7 +4293,7 @@ async function testWebDav() {
 
 async function uploadWebDavSnapshot() {
   await runWebDavAction("upload", async () => {
-    const summary = await webdavSyncUpload(currentWebDavConfig(), settingsStore.editorSettings, webdavSyncSecrets.value ? webdavSecretsPassphrase.value : undefined);
+    const summary = await webdavSyncUpload(currentWebDavConfig(), settingsStore.editorSettings, webdavSyncSecrets.value ? webdavSecretsPassphrase.value : undefined, webdavSyncSecrets.value);
     return t("settings.syncUploadSuccess", {
       bytes: summary.bytes,
       path: summary.remotePath,
@@ -4248,7 +4304,7 @@ async function uploadWebDavSnapshot() {
 async function downloadWebDavSnapshot() {
   if (!window.confirm(t("settings.syncDownloadConfirm"))) return;
   await runWebDavAction("download", async () => {
-    const result = await webdavSyncDownload(currentWebDavConfig(), webdavSyncSecrets.value ? webdavSecretsPassphrase.value : undefined);
+    const result = await webdavSyncDownload(currentWebDavConfig(), webdavSyncSecrets.value ? webdavSecretsPassphrase.value : undefined, webdavSyncSecrets.value);
     if (result.editorSettings && typeof result.editorSettings === "object") {
       settingsStore.updateEditorSettings(result.editorSettings as any);
     }
@@ -4470,8 +4526,8 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
-  clearThemePalettePreview();
-  clearUiFontFamilyPreview();
+  clearThemePaletteOptionPreview();
+  clearUiFontOptionPreview();
   restoreLocaleOptionPreview();
   cleanupTableColumnTemplatePointerDrag();
   cleanupTruncationObservers();
@@ -6095,6 +6151,16 @@ onUnmounted(() => {
                   </Select>
                 </div>
 
+                <div class="settings-item flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2 md:col-span-2" data-editor-keep-explicit-transaction>
+                  <div class="min-w-0 space-y-1">
+                    <Label for="editor-keep-explicit-transaction">{{ t("settings.keepExplicitTransactionInAutoCommit") }}</Label>
+                    <p class="text-xs text-muted-foreground">
+                      {{ t("settings.keepExplicitTransactionInAutoCommitDescription") }}
+                    </p>
+                  </div>
+                  <Switch id="editor-keep-explicit-transaction" v-model="editKeepExplicitTransactionInAutoCommit" class="mt-0.5 shrink-0" />
+                </div>
+
                 <div class="settings-item flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2" :class="{ 'opacity-50': editExecuteMode !== 'current' }">
                   <div class="space-y-1">
                     <Label for="editor-execute-all-on-blank-line">{{ t("settings.executeAllOnBlankLine") }}</Label>
@@ -6539,7 +6605,7 @@ onUnmounted(() => {
                       </SelectValue>
                     </SelectTrigger>
                     <SelectContent class="w-[150px]" @pointerleave="restoreLocaleOptionPreview">
-                      <SelectItem v-for="locale in LOCALE_OPTIONS" :key="locale.value" :value="locale.value" @pointerenter="previewLocaleOption(locale.value)" @focus="previewLocaleOption(locale.value)">
+                      <SelectItem v-for="locale in LOCALE_OPTIONS" :key="locale.value" :value="locale.value" @pointerenter="scheduleLocaleOptionPreview(locale.value)" @focus="previewLocaleOption(locale.value)">
                         <div class="flex items-center gap-1">
                           <span class="inline-flex h-5 w-6 shrink-0 items-center justify-center text-sm font-medium leading-none">
                             {{ locale.flag }}
@@ -6571,8 +6637,8 @@ onUnmounted(() => {
                             </span>
                           </SelectValue>
                         </SelectTrigger>
-                        <SelectContent @pointerleave="clearThemePalettePreview">
-                          <SelectItem v-for="option in appThemePaletteOptions" :key="option.value" :value="option.value" @pointerenter="previewThemePalette(option.value)" @focus="previewThemePalette(option.value)">
+                        <SelectContent @pointerleave="clearThemePaletteOptionPreview">
+                          <SelectItem v-for="option in appThemePaletteOptions" :key="option.value" :value="option.value" @pointerenter="scheduleThemePalettePreview(option.value)" @focus="previewThemePaletteOption(option.value)">
                             <div class="flex items-center gap-2">
                               <span class="h-3 w-3 rounded-full border border-border shadow-xs" :style="{ background: option.previewColor }" />
                               {{ option.label }}
@@ -6645,7 +6711,7 @@ onUnmounted(() => {
                     :content-style="{ fontFamily: editUiFontFamily || DEFAULT_UI_FONT_FAMILY }"
                     @update:model-value="onUiFontFamilyChange"
                     @update:open="onUiFontFamilyOpenChange"
-                    @option-hover="previewUiFontOption"
+                    @option-hover="scheduleUiFontOptionPreview"
                     @option-highlight="previewUiFontOption"
                     @option-leave="restoreUiFontFamilyPreview"
                   >
@@ -7655,7 +7721,7 @@ onUnmounted(() => {
                     :min="MIN_RESULT_PAGE_SIZE"
                     :max="MAX_RESULT_PAGE_SIZE"
                     :model-value="editPageSize"
-                    :aria-invalid="hasBlockingQueryResultRowLimit"
+                    :aria-invalid="queryResultRowLimitViolated"
                     @update:model-value="updatePageSizeDraft"
                   />
                 </div>
@@ -7664,29 +7730,44 @@ onUnmounted(() => {
                     <Label for="tableOpenSortMode">{{ t("settings.tableOpenSortMode") }}</Label>
                     <p class="text-xs text-muted-foreground">{{ t("settings.tableOpenSortDescription") }}</p>
                   </div>
-                  <select id="tableOpenSortMode" v-model="editTableOpenSortMode" class="h-8 rounded-md border bg-background px-2 text-xs">
-                    <option value="none">{{ t("settings.tableSortUnchanged") }}</option>
-                    <option value="database">{{ t("settings.tableSortDatabase") }}</option>
-                    <option value="local">{{ t("settings.tableSortLocal") }}</option>
-                  </select>
+                  <Select v-model="editTableOpenSortMode">
+                    <SelectTrigger id="tableOpenSortMode" class="h-8 w-44 shrink-0 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">{{ t("settings.tableSortUnchanged") }}</SelectItem>
+                      <SelectItem value="database">{{ t("settings.tableSortDatabase") }}</SelectItem>
+                      <SelectItem value="local">{{ t("settings.tableSortLocal") }}</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div class="settings-item flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
                   <div class="space-y-1">
                     <Label for="tableDatabaseSortDirection">{{ t("settings.tableDatabaseSortDirection") }}</Label>
                   </div>
-                  <select id="tableDatabaseSortDirection" v-model="editTableDatabaseSortDirection" class="h-8 rounded-md border bg-background px-2 text-xs">
-                    <option value="asc">{{ t("settings.tableSortAscending") }}</option>
-                    <option value="desc">{{ t("settings.tableSortDescending") }}</option>
-                  </select>
+                  <Select v-model="editTableDatabaseSortDirection">
+                    <SelectTrigger id="tableDatabaseSortDirection" class="h-8 w-36 shrink-0 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="asc">{{ t("settings.tableSortAscending") }}</SelectItem>
+                      <SelectItem value="desc">{{ t("settings.tableSortDescending") }}</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div class="settings-item flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2">
                   <div class="space-y-1">
                     <Label for="tableLocalSortDirection">{{ t("settings.tableLocalSortDirection") }}</Label>
                   </div>
-                  <select id="tableLocalSortDirection" v-model="editTableLocalSortDirection" class="h-8 rounded-md border bg-background px-2 text-xs">
-                    <option value="asc">{{ t("settings.tableSortAscending") }}</option>
-                    <option value="desc">{{ t("settings.tableSortDescending") }}</option>
-                  </select>
+                  <Select v-model="editTableLocalSortDirection">
+                    <SelectTrigger id="tableLocalSortDirection" class="h-8 w-36 shrink-0 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="asc">{{ t("settings.tableSortAscending") }}</SelectItem>
+                      <SelectItem value="desc">{{ t("settings.tableSortDescending") }}</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div data-settings-search-id="default-auto-keep-results" :class="['settings-item flex items-center justify-between gap-4 rounded-md border bg-muted/20 px-3 py-2', settingsSearchTargetClass('default-auto-keep-results')]">
                   <div class="min-w-0 space-y-1">
@@ -7715,8 +7796,8 @@ onUnmounted(() => {
                     <Label for="query-result-max-rows-enabled">
                       {{ t("settings.queryResultMaxRows") }}
                     </Label>
-                    <p class="text-xs" :class="hasBlockingQueryResultRowLimit ? 'text-destructive' : 'text-muted-foreground'">
-                      {{ hasBlockingQueryResultRowLimit ? t("settings.queryResultMaxRowsTooSmall", { pageSize: editPageSize }) : editQueryResultMaxRowsEnabled ? t("settings.queryResultMaxRowsDescription") : t("settings.queryResultMaxRowsUnlimitedDescription") }}
+                    <p class="text-xs" :class="queryResultRowLimitViolated ? 'text-destructive' : 'text-muted-foreground'">
+                      {{ queryResultRowLimitViolated ? t("settings.queryResultMaxRowsTooSmall", { pageSize: editPageSize }) : editQueryResultMaxRowsEnabled ? t("settings.queryResultMaxRowsDescription") : t("settings.queryResultMaxRowsUnlimitedDescription") }}
                     </p>
                   </div>
                   <div class="flex shrink-0 items-center gap-2">
@@ -7729,7 +7810,7 @@ onUnmounted(() => {
                       :max="MAX_QUERY_RESULT_MAX_ROWS"
                       :model-value="editQueryResultMaxRows"
                       :disabled="!editQueryResultMaxRowsEnabled"
-                      :aria-invalid="hasBlockingQueryResultRowLimit"
+                      :aria-invalid="queryResultRowLimitViolated"
                       @input="updateQueryResultMaxRowsInput"
                     />
                     <Switch id="query-result-max-rows-enabled" v-model="editQueryResultMaxRowsEnabled" :aria-label="t('settings.queryResultMaxRowsEnabled')" />
@@ -8550,7 +8631,7 @@ LIMIT 100;</pre
               </div>
             </section>
 
-            <section v-else-if="activeSettingsTab === 'backups' && !isWeb" data-settings-search-id="backups" :class="['py-2', settingsSearchTargetClass('backups')]">
+            <section v-else-if="activeSettingsTab === 'backups'" data-settings-search-id="backups" :class="['py-2', settingsSearchTargetClass('backups')]">
               <ScheduledDatabaseBackupSettings />
             </section>
 

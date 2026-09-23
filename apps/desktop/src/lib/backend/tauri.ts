@@ -2,16 +2,41 @@ import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import type { MongoDumpFormat, MongoDumpSourceInput, MongoDumpCatalog, MongoRestoreSourcePreview, MongoDatabaseDumpRequest, MongoDatabaseRestoreRequest, MongoDatabaseDumpProgress } from "./mongodbDumpTypes";
 import type { MongoRestoreUpload, MongoSourceReadOptions } from "./mongodbDumpTypes";
 import type { UserSkillRootSettings, UserSkillsListResult, UserSkillsReadResult } from "@/types/userSkills";
+import type { DatabaseBackupCommand, DatabaseBackupBackgroundStatus } from "@/lib/backup/backgroundDatabaseBackup";
+
+export function databaseBackupCommand<T = unknown>(command: DatabaseBackupCommand): Promise<T> {
+  return invoke("database_backup_command", { command });
+}
+
+export function databaseBackupBackground(enabled?: boolean): Promise<DatabaseBackupBackgroundStatus> {
+  return invoke("database_backup_background", { enabled });
+}
+
+export async function downloadDatabaseBackupFile(_runId: string, _index: number): Promise<void> {
+  throw new Error("Use the file manager to access desktop backup files");
+}
+
+export function prepareDatabaseBackupRestore(id: string, index: number): Promise<string | SqlFilePreview> {
+  return invoke("database_backup_command", { command: { action: "file", id, index } });
+}
 import { assertUpdateAllowsCommand } from "@/lib/app/updatePreparation";
 import { collectBrowserSupportInfo } from "@/lib/app/supportInfo";
 // Re-exported below so the HTTP transport shares one definition; imported here
 // for this module's own signatures (a re-export does not bind local names).
 import type { PluginPlanCapabilities, PluginPlanRequest, PluginPlanResult } from "@/types/pluginPlan";
+import type { PluginTableMetadata, PluginTableMetadataRequest } from "@/types/pluginSchemaMetadata";
 
 function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   assertUpdateAllowsCommand(command);
   return tauriInvoke<T>(command, args);
 }
+
+import type { MigrationPreflight, MigrationReport } from "./migration";
+export type { MigrationPreflight, MigrationReport } from "./migration";
+export const migrationStatus = (): Promise<MigrationPreflight> => invoke("migration_status");
+export const migrationStart = (): Promise<MigrationReport> => invoke("migration_start");
+export const migrationRetry = (): Promise<MigrationReport> => invoke("migration_retry");
+export const migrationCleanupBackups = (): Promise<void> => invoke("migration_cleanup_backups");
 import type { DetachedTabHandoff } from "@/lib/app/detachedTabHandoff";
 import { BackendErrorException, type BackendError } from "@/lib/backend/errorUtils";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -179,6 +204,7 @@ export interface UpgradeAllAgentDriversResult {
 export interface AgentUpdateBlocker {
   db_type: string;
   label: string;
+  connections: string[];
 }
 
 export type AgentOfflineArtifactKind = "jar" | "native";
@@ -808,6 +834,7 @@ export async function saveMaxRetries(maxRetries: number): Promise<void> {
 export type { OpenTabsStatePayload, PersistedEditorGroup } from "@/lib/app/openTabsPersistence";
 /** Shared with `@/lib/plugins/pluginHostBridge`; re-exported so the HTTP transport reuses one definition. */
 export type { PluginPlanCapabilities, PluginPlanRequest, PluginPlanResult } from "@/types/pluginPlan";
+export type { PluginColumnMetadata, PluginMetadataFieldAvailability, PluginMetadataFieldCapabilities, PluginTableMetadata, PluginTableMetadataRequest } from "@/types/pluginSchemaMetadata";
 import type { OpenTabsStatePayload } from "@/lib/app/openTabsPersistence";
 import { uuid } from "@/lib/common/utils";
 
@@ -967,16 +994,17 @@ export async function forgetWebdavSyncSecretsPassphrase(): Promise<void> {
   return invoke("forget_webdav_sync_secrets_passphrase");
 }
 
-export async function webdavSyncUpload(config: WebDavConfig, editorSettings?: unknown, secretsPassphrase?: string): Promise<WebDavSyncSummary> {
+export async function webdavSyncUpload(config: WebDavConfig, editorSettings?: unknown, secretsPassphrase?: string, includeSecrets = false): Promise<WebDavSyncSummary> {
   return invoke("webdav_sync_upload", {
     config,
     editorSettings,
     secretsPassphrase,
+    includeSecrets,
   });
 }
 
-export async function webdavSyncDownload(config: WebDavConfig, secretsPassphrase?: string): Promise<WebDavDownloadResult> {
-  return invoke("webdav_sync_download", { config, secretsPassphrase });
+export async function webdavSyncDownload(config: WebDavConfig, secretsPassphrase?: string, restoreSecrets = true): Promise<WebDavDownloadResult> {
+  return invoke("webdav_sync_download", { config, secretsPassphrase, restoreSecrets });
 }
 
 export async function snippetSyncTest(config: SnippetSyncConfig): Promise<void> {
@@ -1160,6 +1188,7 @@ export interface AiChatMessage {
 }
 
 export interface AiConversation {
+  pluginContext?: import("@/lib/ai/aiPluginConversation").AiPluginContext;
   id: string;
   title: string;
   connectionName: string;
@@ -1333,6 +1362,10 @@ export async function replaceNacosSessionCredential(connectionId: string, userna
 
 export async function checkConnectionHealth(connectionId: string): Promise<void> {
   return invokeBackend("check_connection_health", { connectionId });
+}
+
+export async function prewarmConnection(connectionId: string, database?: string, catalog?: string, clientSessionId?: string): Promise<void> {
+  return invokeBackend("prewarm_connection", { connectionId, database, catalog, clientSessionId });
 }
 
 export async function connectionIdentifierQuote(connectionId: string, database?: string): Promise<string | undefined> {
@@ -1510,6 +1543,10 @@ export async function getColumns(connectionId: string, database: string, schema:
   });
 }
 
+export async function getPluginTableMetadata(request: PluginTableMetadataRequest): Promise<PluginTableMetadata> {
+  return invoke("get_plugin_table_metadata", { request });
+}
+
 export async function getSqlServerColumnMetadata(connectionId: string, database: string, schema: string, table: string): Promise<SqlServerColumnMetadata[]> {
   return invoke("get_sqlserver_column_metadata", {
     connectionId,
@@ -1618,6 +1655,10 @@ export async function executeMulti(
     useTransaction?: boolean;
     continueOnError?: boolean;
     executionMode?: "simple";
+    /** MySQL auto-commit tabs: keep a transaction the user opened explicitly
+     *  (`BEGIN` / `START TRANSACTION`) open across executions until COMMIT /
+     *  ROLLBACK instead of rolling it back when the batch ends. */
+    preserveExplicitTransaction?: boolean;
   },
 ): Promise<QueryResult[]> {
   const diagnosticsEnabled = isDebugLoggingEnabled();
@@ -1684,6 +1725,7 @@ export async function executeMultiWithProgress(
     useTransaction?: boolean;
     continueOnError?: boolean;
     executionMode?: "simple";
+    preserveExplicitTransaction?: boolean;
     executionId?: string;
   },
 ): Promise<QueryResult[]> {
@@ -2457,7 +2499,8 @@ export async function sendPluginBinary(pluginId: string, channel: string, dataBa
 }
 
 export interface PluginLocalFileHandle {
-  handleId: number;
+  /** Opaque uuid string from the Rust registry — never a number (JS doubles lose precision above 2^53). */
+  handleId: string;
   name: string;
   size: number;
   contentType: string;
@@ -2479,15 +2522,15 @@ export async function openPluginLocalFile(pluginId: string, path: string, write:
   return invoke("plugin_file_open", { pluginId, path, write });
 }
 
-export async function readPluginLocalFileChunk(pluginId: string, handleId: number, offset: number, length?: number): Promise<PluginLocalFileChunk> {
+export async function readPluginLocalFileChunk(pluginId: string, handleId: string, offset: number, length?: number): Promise<PluginLocalFileChunk> {
   return invoke("plugin_file_read", { pluginId, handleId, offset, length });
 }
 
-export async function writePluginLocalFileChunk(pluginId: string, handleId: number, offset: number, dataBase64: string): Promise<PluginLocalFileWriteResult> {
+export async function writePluginLocalFileChunk(pluginId: string, handleId: string, offset: number, dataBase64: string): Promise<PluginLocalFileWriteResult> {
   return invoke("plugin_file_write", { pluginId, handleId, offset, dataBase64 });
 }
 
-export async function closePluginLocalFile(pluginId: string, handleId: number): Promise<void> {
+export async function closePluginLocalFile(pluginId: string, handleId: string): Promise<void> {
   return invoke("plugin_file_close", { pluginId, handleId });
 }
 
@@ -4729,14 +4772,14 @@ export async function meilisearchGetDocument(connectionId: string, index: string
   });
 }
 
-export async function meilisearchGetIndexSettings(connectionId: string, index: string): Promise<Record<string, any>> {
+export async function meilisearchGetIndexSettings(connectionId: string, index: string): Promise<MeilisearchIndexSettings> {
   return invoke("meilisearch_get_index_settings", {
     connectionId,
     index,
   });
 }
 
-export async function meilisearchUpdateIndexSettings(connectionId: string, index: string, settings: Record<string, any>): Promise<void> {
+export async function meilisearchUpdateIndexSettings(connectionId: string, index: string, settings: Record<string, unknown>): Promise<void> {
   return invoke("meilisearch_update_index_settings", {
     connectionId,
     index,
@@ -4744,11 +4787,18 @@ export async function meilisearchUpdateIndexSettings(connectionId: string, index
   });
 }
 
-export async function meilisearchGetIndexStats(connectionId: string, index: string): Promise<{ numberOfDocuments: number; isIndexing: boolean; fieldDistribution: Record<string, number> } & Record<string, any>> {
+export async function meilisearchGetIndexStats(connectionId: string, index: string): Promise<{ numberOfDocuments: number; isIndexing: boolean; fieldDistribution: Record<string, number> } & Record<string, unknown>> {
   return invoke("meilisearch_get_index_stats", {
     connectionId,
     index,
   });
+}
+
+export interface MeilisearchIndexSettings {
+  [key: string]: unknown;
+  pagination?: {
+    maxTotalHits?: number;
+  };
 }
 
 export interface MeilisearchIndexOverview {
@@ -4999,7 +5049,10 @@ export interface SqlFilePreview {
   establishesDatabaseContext?: boolean;
   packageFilePaths?: string[];
   packagePartCount?: number;
+  cleanupToken?: string;
 }
+
+export async function releaseSqlFilePreview(_cleanupToken: string): Promise<void> {}
 
 export interface SqlFileProgress {
   executionId: string;

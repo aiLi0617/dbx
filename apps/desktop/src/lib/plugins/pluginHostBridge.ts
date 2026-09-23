@@ -1,6 +1,8 @@
 import type { InstalledPlugin, PluginBinaryEvent, PluginEvent, PluginUiAssetPayload, PluginUiContribution } from "@/types/database";
 import { clonePluginData, snapshotPluginWorkbenchContext } from "./pluginData";
 import { MAX_PLUGIN_PLAN_SQL_CHARS, MAX_PLUGIN_PLAN_TIMEOUT_MS, PLUGIN_PLAN_PERMISSION, type PluginPlanCapabilities, type PluginPlanRequest, type PluginPlanResult } from "@/types/pluginPlan";
+import { createPluginAiConversation, type AiPluginConversationRequest } from "@/lib/ai/aiPluginConversation";
+import { MAX_PLUGIN_SCHEMA_METADATA_NAME_CHARS, PLUGIN_SCHEMA_METADATA_CAPABILITY, PLUGIN_SCHEMA_METADATA_PERMISSION, type PluginTableContext, type PluginTableMetadata } from "@/types/pluginSchemaMetadata";
 
 const PLUGIN_MESSAGE_SOURCE = "dbx-plugin";
 const HOST_MESSAGE_SOURCE = "dbx-host";
@@ -92,6 +94,7 @@ export interface PluginHostBridgeApi {
   notify(pluginId: string, method: string, params?: unknown): Promise<void>;
   sendBinary(pluginId: string, channel: string, dataBase64: string): Promise<void>;
   readAsset(pluginId: string, path: string): Promise<PluginUiAssetPayload>;
+  openAiConversation?(request: AiPluginConversationRequest): Promise<void>;
   openWorkbench?(pluginId: string, contributionId: string, context?: PluginWorkbenchContext, options?: { forceNew?: boolean }): Promise<void> | void;
   openFilesystem?(pluginId: string, providerId: string, context?: PluginWorkbenchContext): Promise<void> | void;
   /** Explicit user-triggered reconnect of an owned plugin connection (full flow, interactive password prompt allowed). */
@@ -107,6 +110,8 @@ export interface PluginHostBridgeApi {
    * generates and owns the EXPLAIN statement; the plugin cannot pass one.
    */
   explainPlan?(request: PluginPlanRequest): Promise<PluginPlanResult>;
+  /** Read-only table schema metadata over an already-open Host connection. */
+  getTableMetadata?(context: PluginTableContext): Promise<PluginTableMetadata>;
   closeTab?(): Promise<void> | void;
   /** Persist plugin bytes through the host's native save dialog. Resolves null when the user cancels. */
   saveFile?(pluginId: string, request: PluginSaveFileRequest, data: Uint8Array): Promise<PluginSaveFileResult | null>;
@@ -247,7 +252,9 @@ export class PluginHostBridge {
       capabilities: {
         downloadFile: !!this.api.downloadFile,
         planApi: !!this.api.getPlanCapabilities && !!this.api.explainPlan,
+        [PLUGIN_SCHEMA_METADATA_CAPABILITY]: !!this.api.getTableMetadata,
         storage: !!this.api.storageGet && !!this.api.storageSet && !!this.api.storageDelete,
+        ai: !!this.api.openAiConversation,
       },
       context: snapshotPluginWorkbenchContext(this.context),
     });
@@ -331,6 +338,13 @@ export class PluginHostBridge {
       return null;
     }
     if (method === "host.getContext") return snapshotPluginWorkbenchContext(this.context);
+    if (method === "host.ai.openConversation") {
+      this.requirePermission("host.ai");
+      if (!this.api.openAiConversation) throw new Error("DBX AI conversation panel is unavailable");
+      const request = createPluginAiConversation(this.plugin.manifest, params);
+      await this.api.openAiConversation(request);
+      return null;
+    }
     if (method === "backend.invoke") {
       const input = requireRecord(params, "backend.invoke params");
       const backendMethod = requireProtocolName(input.method, "backend method");
@@ -388,6 +402,11 @@ export class PluginHostBridge {
       this.requirePermission(PLUGIN_PLAN_PERMISSION);
       if (!this.api.explainPlan) throw new Error("Host plan API is unavailable");
       return this.api.explainPlan(requirePluginPlanRequest(requireRecord(params, "host.explainPlan params")));
+    }
+    if (method === "host.getTableMetadata") {
+      this.requirePermission(PLUGIN_SCHEMA_METADATA_PERMISSION);
+      if (!this.api.getTableMetadata) throw new Error("Host schema metadata API is unavailable");
+      return this.api.getTableMetadata(requirePluginTableContext(requireRecord(params, "host.getTableMetadata params")));
     }
     if (method === "host.saveFile") {
       const input = isRecord(params) ? params : {};
@@ -786,6 +805,7 @@ export function pluginSdkSource(initialTheme?: PluginBridgeTheme): string {
       downloadFile: (options) => request('host.downloadFile', options),
       cancelDownload: (downloadId) => request('host.cancelDownload', { downloadId }),
       request,
+      ai: Object.freeze({ openConversation: (options) => request('host.ai.openConversation', options) }),
       invoke: (method, params, options = {}) => request('backend.invoke', { method, params, timeoutMs: options.timeoutMs }),
       stream,
       notify: (method, params) => request('backend.notify', { method, params }),
@@ -806,6 +826,8 @@ export function pluginSdkSource(initialTheme?: PluginBridgeTheme): string {
       // its intent, and the host refuses anything other than "estimated".
       getPlanCapabilities: (connectionId) => request('host.getPlanCapabilities', { connectionId }),
       explainPlan: (planRequest) => request('host.explainPlan', planRequest),
+      // Read-only metadata; the host enforces the permission and open-session gate.
+      getTableMetadata: (tableContext) => request('host.getTableMetadata', tableContext),
       saveFile: (options = {}, data) => {
         if (data === undefined) return request('host.saveFile', options);
         if (typeof data === 'string') return request('host.saveFile', { ...(options || {}), dataBase64: data });
@@ -934,6 +956,34 @@ function optionalPluginPlanScope(value: unknown, label: string): string | undefi
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "string") throw new Error(`${label} must be a string`);
   return value.trim() ? requirePluginPlanIdentifier(value, label) : undefined;
+}
+
+function requirePluginTableContext(input: Record<string, unknown>): PluginTableContext {
+  const context: PluginTableContext = {
+    connectionId: requirePluginSchemaMetadataIdentifier(input.connectionId, "connectionId"),
+    table: requirePluginSchemaMetadataIdentifier(input.table, "table"),
+  };
+  const database = optionalPluginSchemaMetadataIdentifier(input.database, "database");
+  const schema = optionalPluginSchemaMetadataIdentifier(input.schema, "schema");
+  if (database !== undefined) context.database = database;
+  if (schema !== undefined) context.schema = schema;
+  return context;
+}
+
+function requirePluginSchemaMetadataIdentifier(value: unknown, label: string): string {
+  if (typeof value !== "string") throw new Error(`${label} must be a string`);
+  const identifier = value.trim();
+  if (!identifier) throw new Error(`${label} must not be empty`);
+  if (Array.from(identifier).length > MAX_PLUGIN_SCHEMA_METADATA_NAME_CHARS) {
+    throw new Error(`${label} must be at most ${MAX_PLUGIN_SCHEMA_METADATA_NAME_CHARS} characters`);
+  }
+  return identifier;
+}
+
+function optionalPluginSchemaMetadataIdentifier(value: unknown, label: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") throw new Error(`${label} must be a string`);
+  return value.trim() ? requirePluginSchemaMetadataIdentifier(value, label) : undefined;
 }
 
 /**

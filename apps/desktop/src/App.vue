@@ -18,6 +18,8 @@ import type { ConfigTab } from "@/components/connection/ConnectionDialog.vue";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
 import { useSqlExecutionDangerStore } from "@/stores/sqlExecutionDangerStore";
+import type { MultiDbExecutionContext } from "@/composables/useMultiDbExecution";
+import type { MultiDbExecutionTarget } from "@/types/sqlExecution";
 import { useProductionSafetyStore } from "@/stores/productionSafetyStore";
 import { enforceRightSidebarPanelExclusivity, RIGHT_SIDEBAR_PANEL_IDS, transitionRightSidebarPanels, useSettingsStore, type RightSidebarPanelId, type RightSidebarPanelState } from "@/stores/settingsStore";
 import { useSavedSqlStore } from "@/stores/savedSqlStore";
@@ -27,9 +29,21 @@ import { useTheme } from "@/composables/useTheme";
 import { canDownloadAndInstallUpdate, useAppUpdater } from "@/composables/useAppUpdater";
 import { useMcpUpdateBadge } from "@/composables/useMcpUpdateBadge";
 import { useComponentUpdates, type ComponentUpdateCategory } from "@/composables/useComponentUpdates";
+import type { PluginUpdateBlock } from "@/composables/useComponentUpdates";
 import { COMPONENT_UPDATES_CHANGED_EVENT, notifyComponentPluginsUpdated, notifyComponentUpdatesChanged } from "@/lib/updates/componentUpdateEvents";
-import { driverStoreUpdateBadgeCount, showMcpUpdateBadge } from "@/lib/updates/updateBadges";
-import { markPendingComponentUpdatesAfterAppUpdate, resolveUpdateAllAction, runPendingComponentUpdatePlan, shouldCloseUpdateCenterAfterComponentUpdate, takePendingComponentUpdatesAfterAppRestart, type PendingComponentUpdatePlan } from "@/lib/updates/componentUpdateOrchestration";
+import { driverStoreUpdateBadgeCount, showMcpUpdateBadge, showToolbarUpdateAction } from "@/lib/updates/updateBadges";
+import {
+  continuePreparedAppUpdate,
+  hasPendingComponentUpdatesAfterAppRestart,
+  markPendingComponentUpdatesAfterAppUpdate,
+  resolveUpdateAllAction,
+  runPendingComponentUpdatesBeforePluginReconnect,
+  runPendingComponentUpdatePlan,
+  shouldCloseUpdateCenterAfterComponentUpdate,
+  takePendingComponentUpdatesAfterAppRestart,
+  updateBlockerLabels,
+  type PendingComponentUpdatePlan,
+} from "@/lib/updates/componentUpdateOrchestration";
 import { isUpdatePreviewMockEnabled } from "@/lib/updates/updatePreviewMock";
 import { useExportTracker } from "@/composables/useExportTracker";
 import { useFileDrop } from "@/composables/useFileDrop";
@@ -84,6 +98,7 @@ import { parseConnectionDeepLink, parseConnectionDeepLinkUpdate, type Connection
 import { resolveConnectionDeepLinkUpdate } from "@/lib/connection/connectionDeepLinkUpdate";
 import { parseAiConfigDeepLink, type AiConfigDeepLinkDraft } from "@/lib/ai/aiConfigDeepLink";
 import { activeDesktopAiRuns, blockingDesktopAiRunsForQuit } from "@/lib/ai/desktopAiRunRegistry";
+
 import {
   isBrowserReloadShortcut,
   isCloseOtherTabsShortcut,
@@ -162,6 +177,7 @@ import { useBackgroundImage } from "@/composables/useBackgroundImage";
 import ExternalSqlFileChangeDialog from "@/components/editor/ExternalSqlFileChangeDialog.vue";
 import { resolveWindowContext } from "@/lib/app/windowContext";
 import { openDetachedTabWindow } from "@/lib/app/detachedTabWindow";
+import { OPEN_PLUGIN_AI_CONVERSATION, type AiPluginConversationRequest } from "@/lib/ai/aiPluginConversation";
 
 const AiAssistant = defineAsyncComponent(() => import("@/components/editor/AiAssistant.vue"));
 const PluginWorkbenchTab = defineAsyncComponent(() => import("@/components/plugins/PluginWorkbenchTab.vue"));
@@ -181,6 +197,7 @@ const QueryEditorDdlViewDialog = defineAsyncComponent(() => import("@/components
 const QueryEditorObjectSourceDialog = defineAsyncComponent(() => import("@/components/objects/ObjectSourceDialog.vue"));
 
 type AiAssistantHandle = {
+  openPluginConversation: (request: AiPluginConversationRequest) => void;
   triggerAction: (action: AiAction, instruction?: string) => void;
   setPrompt: (text: string) => void;
   addTableMention: (target: { schema?: string; table: string }) => void;
@@ -396,6 +413,15 @@ void loadUiTuning();
 const { sidebarWidth, aiPanelWidth, historyWidth, sqlLibraryWidth, sqlFilePanelWidth, tabBarWidth, tabBarCollapsed, startSidebarResize, startAiPanelResize, startHistoryResize, startSqlLibraryResize, startSqlFilePanelResize, startLeftTabBarResize, startRightTabBarResize, setTabBarCollapsed } =
   usePanelResize();
 const aiAssistantRef = ref<AiAssistantHandle | null>(null);
+provide(OPEN_PLUGIN_AI_CONVERSATION, (request) => {
+  openAiPanel();
+  return new Promise<void>((resolve) => {
+    invokeWhenAiReady((handle) => {
+      handle.openPluginConversation(request);
+      resolve();
+    });
+  });
+});
 const appSidebarRef = ref<InstanceType<typeof AppSidebar> | null>(null);
 const appTabBarRef = ref<InstanceType<typeof AppTabBar> | null>(null);
 const contentAreaRef = ref<InstanceType<typeof SqlEditorWorkspace> | null>(null);
@@ -916,8 +942,16 @@ const toolbarAgentDriverUpdateCount = computed(() => Math.max(agentDriverUpdateC
 const toolbarDriverUpdateCount = computed(() => toolbarAgentDriverUpdateCount.value);
 const toolbarJdbcUpdateAvailable = computed(() => componentUpdates.jdbcUpdateAvailable.value);
 const toolbarMcpUpdateAvailable = computed(() => mcpUpdateAvailable.value || componentUpdates.mcpUpdateAvailable.value);
-const toolbarPluginUpdateAvailable = computed(() => componentUpdates.pluginUpdateCount.value > 0);
-const toolbarHasUpdateAvailable = computed(() => hasUpdateAvailable.value || toolbarDriverUpdateCount.value > 0 || toolbarJdbcUpdateAvailable.value || toolbarMcpUpdateAvailable.value || toolbarPluginUpdateAvailable.value);
+const toolbarHasUpdateAvailable = computed(() =>
+  showToolbarUpdateAction({
+    appUpdateAvailable: hasUpdateAvailable.value,
+    driverUpdateCount: toolbarDriverUpdateCount.value,
+    jdbcUpdateAvailable: toolbarJdbcUpdateAvailable.value,
+    mcpUpdateAvailable: toolbarMcpUpdateAvailable.value,
+    pluginUpdateCount: componentUpdates.pluginUpdateCount.value,
+    componentUpdatesRunning: componentUpdates.updating.value,
+  }),
+);
 const showDriverStoreUpdateBadge = computed(() => driverStoreUpdateBadgeCount(settingsStore.editorSettings.autoUpdateDrivers, settingsStore.editorSettings.autoUpdateJdbc, toolbarDriverUpdateCount.value, toolbarJdbcUpdateAvailable.value));
 const showMcpSettingsUpdateBadge = computed(() => showMcpUpdateBadge(settingsStore.editorSettings.autoUpdateMcp, toolbarMcpUpdateAvailable.value));
 const manualCheckingAllUpdates = ref(false);
@@ -990,7 +1024,7 @@ function multiExecuteTargetLabel(target: { connectionId: string; catalog?: strin
   return [connection?.name || target.connectionId, target.catalog, target.database, target.schema].filter((value) => value !== undefined && value !== "").join(" / ");
 }
 
-async function executeMultiDbTarget(input: { target: { connectionId: string; catalog?: string; database: string; schema?: string }; sourceTabId: string; sql: string; scopeId: string; context: { sourceOffset?: number; manualTransaction?: boolean }; isCancellationRequested: () => boolean }) {
+async function executeMultiDbTarget(input: { target: MultiDbExecutionTarget; sourceTabId: string; sql: string; scopeId: string; context: Readonly<MultiDbExecutionContext>; isCancellationRequested: () => boolean }) {
   const tab = queryStore.tabs.find((candidate) => candidate.id === input.sourceTabId);
   const connection = connectionStore.getConfig(input.target.connectionId);
   if (!tab || !connection) return { status: "failed" as const, errorMessage: t("multiDbExecute.targetMissingConnection") };
@@ -1008,6 +1042,8 @@ async function executeMultiDbTarget(input: { target: { connectionId: string; cat
     manualTransaction: input.context.manualTransaction,
     blockDangerousRedisCommands: blockDangerousRedisCommands.value,
     targetLabel: multiExecuteTargetLabel(input.target),
+    // The confirmation must list the whole fan-out, not just this target.
+    batchTargetLabels: input.context.targets.map(multiExecuteTargetLabel),
     scopeId: input.scopeId,
     isCancellationRequested: input.isCancellationRequested,
     targetContext: sqlExecutionTargetCapabilities(connection)?.provider.toExecutionContext(input.target, connection),
@@ -1257,14 +1293,24 @@ function handleComponentUpdatesChanged() {
   });
 }
 
+function pluginUpdateBlockMessage(block: PluginUpdateBlock): string {
+  if (block.reason === "connections") return `${block.pluginName}: ${t("pluginPlatform.updateBlockedByConnections", { labels: block.connections })}`;
+  const key = block.reason === "operations" ? "pluginPlatform.updateBlockedByOperations" : "pluginPlatform.updateInProgress";
+  return `${block.pluginName}: ${t(key)}`;
+}
+
 function reportComponentUpdateResult(result: Awaited<ReturnType<typeof componentUpdates.installCategory>>) {
   const updatedComponents = [result.drivers > 0 ? t("settings.updateDrivers") : "", result.jdbc ? t("settings.updateJdbc") : "", result.mcp ? t("settings.updateMcp") : "", result.plugins > 0 ? t("settings.updatePlugins") : ""].filter(Boolean);
   // Only a clean refresh is authoritative; a failed registry check must not clear stale toolbar state.
   if (result.failed.length === 0) syncToolbarComponentUpdateState();
   if (result.plugins > 0) notifyComponentPluginsUpdated();
   if (updatedComponents.length) toast(t("updates.componentsAutoUpdated", { components: updatedComponents.join(t("updates.componentListSeparator")) }));
-  if (result.skippedDrivers > 0) toast(t("updates.componentsAutoUpdateSkipped"), 6000);
-  if (result.failed.length) toast(t("updates.componentsAutoUpdateFailed", { count: result.failed.length }), 6000);
+  if (result.blockedDrivers.length) {
+    toast(t("driverStore.driverUpdateBlocked", { labels: updateBlockerLabels(result.blockedDrivers).join(", ") }), 8000);
+  } else if (result.skippedDrivers > 0) toast(t("updates.componentsAutoUpdateSkipped"), 6000);
+  const otherFailureCount = result.failed.length - result.blockedPlugins.length;
+  const failureMessages = [result.blockedPlugins.map(pluginUpdateBlockMessage).join("\n"), otherFailureCount > 0 ? t("updates.componentsAutoUpdateFailed", { count: otherFailureCount }) : ""].filter(Boolean);
+  if (failureMessages.length) toast(failureMessages.join("\n"), 8000);
 
   if (
     shouldCloseUpdateCenterAfterComponentUpdate({
@@ -1314,6 +1360,19 @@ function availableComponentUpdateCategories(): ComponentUpdateCategory[] {
   return categories;
 }
 
+function continueAppUpdateWithComponents(categories: ComponentUpdateCategory[]) {
+  return continuePreparedAppUpdate({
+    hasComponentUpdates: categories.length > 0,
+    restartOnly: updateReady.value,
+    rememberComponentUpdates: () => rememberComponentUpdatesForRestartedApp({ kind: "manual", categories }),
+    installComponents: async () => {
+      reportComponentUpdateResult(await componentUpdates.installCategories(categories));
+    },
+    installDownloadedUpdate,
+    restartApp,
+  });
+}
+
 async function updateAllAvailable() {
   if (updatingAllUpdates.value) return;
   updatingAllUpdates.value = true;
@@ -1331,17 +1390,9 @@ async function updateAllAvailable() {
       reportComponentUpdateResult(await componentUpdates.installCategories(categories));
       return;
     }
-    if (action === "defer-components") {
-      const remembered = await rememberComponentUpdatesForRestartedApp({ kind: "manual", categories });
-      if (remembered) {
-        toast(t("settings.updateRestartHint"), 6000);
-        return;
-      }
-      reportComponentUpdateResult(await componentUpdates.installCategories(categories));
-      return;
-    }
+    if (action === "install-app") return continueAppUpdateWithComponents(categories);
     if (action === "download-app") await downloadUpdateInBackground();
-    if (updateDownloaded.value || updateReady.value) await rememberComponentUpdatesForRestartedApp({ kind: "manual", categories });
+    if (updateDownloaded.value || updateReady.value) await continueAppUpdateWithComponents(categories);
   } finally {
     updatingAllUpdates.value = false;
   }
@@ -3782,20 +3833,22 @@ async function initApp() {
         onOptionalStateError: (error) => console.error("[STARTUP] settingsStore.initAiConfigs failed", error),
       });
     }
-    // Restored plugin tabs need the sidecar connection registry repopulated
-    // (see reconnectRestoredPluginTabs); kick it off before the heavier
-    // optional init so it races ahead of each plugin webview's first
-    // session/open. Fire-and-forget: it must never block startup.
-    void queryStore.reconnectRestoredPluginTabs();
-    await settingsStore.initDesktopSettings().catch(() => {});
-    if (isDesktop) {
-      updateWindowReady = true;
-      await initializeUpdatePreparation();
-      await initializeUpdater();
-      if (!isDetachedWindowContext) {
-        void consumePendingComponentUpdatesAfterRestart();
-      }
-    }
+    await runPendingComponentUpdatesBeforePluginReconnect({
+      hasPendingComponentUpdates: () => !isDetachedWindowContext && hasPendingComponentUpdatesAfterAppRestart(),
+      prepareStartup: async () => {
+        await settingsStore.initDesktopSettings().catch(() => {});
+        if (isDesktop) {
+          updateWindowReady = true;
+          await initializeUpdatePreparation();
+          await initializeUpdater();
+        }
+      },
+      consumePendingComponentUpdates: consumePendingComponentUpdatesAfterRestart,
+      // Restored plugin tabs need the sidecar connection registry repopulated
+      // (see reconnectRestoredPluginTabs). It is fire-and-forget so a slow
+      // sidecar or interactive prompt never blocks startup.
+      reconnectRestoredPluginTabs: async () => queryStore.reconnectRestoredPluginTabs(),
+    });
 
     void promptTemplateStore.init();
 
@@ -4512,7 +4565,7 @@ onUnmounted(() => {
           @animationend="finishSqlLibraryFlyAnimation(sqlLibraryFlyAnimation.id)"
         />
         <Transition name="toast">
-          <div v-if="toastVisible" class="fixed bottom-6 inset-x-0 mx-auto z-99999 w-max max-w-[90vw] sm:max-w-3xl px-4 py-2 rounded-lg bg-foreground text-background text-sm shadow-lg select-text whitespace-pre-wrap break-words">
+          <div v-if="toastVisible" class="fixed bottom-6 inset-x-0 mx-auto z-99999 w-max max-w-[90vw] sm:max-w-3xl px-4 py-2 rounded-lg bg-foreground text-background-solid text-sm shadow-lg select-text whitespace-pre-wrap break-words">
             <span>{{ toastMessage }}</span>
             <button v-if="toastAction" type="button" class="ml-3 shrink-0 rounded border border-background/40 bg-background/10 px-2 py-0.5 text-xs font-medium hover:bg-background/20" @click="toastAction.onClick()">
               {{ toastAction.label }}

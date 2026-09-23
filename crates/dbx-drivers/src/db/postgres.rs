@@ -33,12 +33,13 @@ use crate::execution::{await_stream_with_progress_timeout, DbOperationBudget, St
 use crate::models::connection::DatabaseType;
 use crate::sql::starts_with_executable_sql_keyword;
 use crate::types::{
-    ColumnInfo, CompletionAssistantCandidate, CompletionAssistantCandidateKind, CompletionAssistantMatchMode,
-    CompletionAssistantObjectKind, CompletionAssistantRequest, CompletionAssistantResponse, ConstraintInfo,
-    CustomTypeDdl, CustomTypeDetails, CustomTypeDomainConstraint, CustomTypeKind, CustomTypeMember,
-    CustomTypeProperties, DatabaseInfo, DatabaseStorageInfo, ExtensionInfo, ForeignKeyInfo, FunctionInfo, IndexInfo,
-    ObjectInfo, ObjectStatistics, OwnerInfo, PgPartitionBound, PgPartitionKind, PgPartitionNode, PgTablePartitioning,
-    QueryMessage, QueryResult, RuleInfo, SchemaInfo, SequenceInfo, SpatialColumnBuilder, TableInfo, TriggerInfo,
+    ColumnInfo, ColumnMetadataCapabilities, CompletionAssistantCandidate, CompletionAssistantCandidateKind,
+    CompletionAssistantMatchMode, CompletionAssistantObjectKind, CompletionAssistantRequest,
+    CompletionAssistantResponse, ConstraintInfo, CustomTypeDdl, CustomTypeDetails, CustomTypeDomainConstraint,
+    CustomTypeKind, CustomTypeMember, CustomTypeProperties, DatabaseInfo, DatabaseStorageInfo, ExtensionInfo,
+    ForeignKeyInfo, FunctionInfo, IndexInfo, ObjectInfo, ObjectStatistics, OwnerInfo, PgPartitionBound,
+    PgPartitionKind, PgPartitionNode, PgTablePartitioning, QueryMessage, QueryResult, RuleInfo, SchemaInfo,
+    SequenceInfo, SpatialColumnBuilder, TableInfo, TriggerInfo,
 };
 
 pub const GAUSSDB_COMPATIBILITY_SQL: &str =
@@ -4711,6 +4712,7 @@ fn column_info_from_row_offset(row: &Row, offset: usize) -> ColumnInfo {
         numeric_scale: row.try_get::<_, Option<i32>>(offset + 8).ok().flatten(),
         character_maximum_length: row.try_get::<_, Option<i32>>(offset + 9).ok().flatten(),
         enum_values: parse_enum_values_from_row(row, offset + 10),
+        metadata_capabilities: Some(ColumnMetadataCapabilities::all_supported()),
         ..Default::default()
     }
 }
@@ -4782,9 +4784,13 @@ fn postgres_indexes_for_relations_query_tiers() -> [&'static str; 2] {
 // (schema, table) pair. Not merged into a shared fragment for the same
 // reason as the columns queries above — an alias would need renaming to
 // line up, and result columns are read positionally.
+// `COALESCE(a.attname::text, pg_get_indexdef(...))` keeps the cast: a bare
+// `COALESCE(name, text)` resolves to `name`, so PostgreSQL silently truncates an
+// expression key part to 63 bytes (NAMEDATALEN - 1) and the rebuilt CREATE INDEX
+// becomes invalid SQL (#9988).
 fn postgres_indexes_for_relations_sql() -> &'static str {
     "SELECT t.oid::bigint AS relid, i.relname AS index_name, \
-             array_agg(COALESCE(a.attname, pg_get_indexdef(ix.indexrelid, k.n::int, false)) ORDER BY k.n) AS columns, \
+             array_agg(COALESCE(a.attname::text, pg_get_indexdef(ix.indexrelid, k.n::int, false)) ORDER BY k.n) AS columns, \
              array_agg(CASE WHEN oc.opcdefault THEN NULL ELSE quote_ident(opcns.nspname) || '.' || quote_ident(oc.opcname) END ORDER BY k.n) AS column_opclasses, \
              (ix.indisunique AND ix.indisvalid) AS is_unique, \
              ix.indisprimary AS is_primary, \
@@ -4814,7 +4820,7 @@ fn postgres_indexes_for_relations_sql() -> &'static str {
 fn postgres_indexes_for_relations_compat_sql() -> &'static str {
     "SELECT t.oid::bigint AS relid, i.relname AS index_name, \
              ARRAY( \
-               SELECT COALESCE(a.attname, pg_get_indexdef(ix.indexrelid, pos.n, false)) \
+               SELECT COALESCE(a.attname::text, pg_get_indexdef(ix.indexrelid, pos.n, false)) \
                FROM generate_series(1, array_length(string_to_array(ix.indkey::text, ' '), 1)) AS pos(n) \
                LEFT JOIN pg_attribute a \
                  ON a.attrelid = t.oid \
@@ -7242,6 +7248,7 @@ pub async fn list_object_statistics(pool: &Pool, schema: &str) -> Result<Vec<Obj
             schema: Some(schema.to_string()),
             estimated_rows: row.try_get::<_, i64>(1).ok(),
             total_bytes: row.try_get::<_, i64>(2).ok(),
+            ..Default::default()
         })
         .collect())
 }
@@ -7618,6 +7625,7 @@ fn redshift_columns_from_query_result(result: QueryResult) -> Vec<ColumnInfo> {
                 numeric_scale: query_result_i32(&row, 5),
                 character_maximum_length: query_result_i32(&row, 6),
                 enum_values: None,
+                metadata_capabilities: Some(ColumnMetadataCapabilities::all_supported()),
                 ..Default::default()
             })
         })
@@ -8844,8 +8852,12 @@ async fn execute_query_with_max_rows_inner(
 
 // Sibling of `postgres_indexes_for_relations_sql` (~line 3288), for a single
 // (schema, table) instead of a batch of oids — see the note there.
+// `COALESCE(a.attname::text, pg_get_indexdef(...))` keeps the cast: a bare
+// `COALESCE(name, text)` resolves to `name`, so PostgreSQL silently truncates an
+// expression key part to 63 bytes (NAMEDATALEN - 1) and the rebuilt CREATE INDEX
+// becomes invalid SQL (#9988).
 const POSTGRES_INDEXES_SQL: &str = "SELECT i.relname AS index_name, \
-             array_agg(COALESCE(a.attname, pg_get_indexdef(ix.indexrelid, k.n::int, false)) ORDER BY k.n) AS columns, \
+             array_agg(COALESCE(a.attname::text, pg_get_indexdef(ix.indexrelid, k.n::int, false)) ORDER BY k.n) AS columns, \
              array_agg(CASE WHEN oc.opcdefault THEN NULL ELSE quote_ident(opcns.nspname) || '.' || quote_ident(oc.opcname) END ORDER BY k.n) AS column_opclasses, \
              (ix.indisunique AND ix.indisvalid) AS is_unique, \
              ix.indisprimary AS is_primary, \
@@ -8874,7 +8886,7 @@ const POSTGRES_INDEXES_SQL: &str = "SELECT i.relname AS index_name, \
 // 3312) — see the note on `POSTGRES_INDEXES_SQL` above.
 const POSTGRES_INDEXES_COMPAT_SQL: &str = "SELECT i.relname AS index_name, \
              ARRAY( \
-               SELECT COALESCE(a.attname, pg_get_indexdef(ix.indexrelid, pos.n, false)) \
+               SELECT COALESCE(a.attname::text, pg_get_indexdef(ix.indexrelid, pos.n, false)) \
                FROM generate_series(1, array_length(string_to_array(ix.indkey::text, ' '), 1)) AS pos(n) \
                LEFT JOIN pg_attribute a \
                  ON a.attrelid = t.oid \
@@ -13204,6 +13216,23 @@ mod tests {
         }
         for sql in [POSTGRES_INDEXES_SQL, POSTGRES_INDEXES_COMPAT_SQL] {
             assert!(sql.contains("t.oid = (CASE WHEN $1 = '' THEN quote_ident($2)"));
+        }
+    }
+
+    #[test]
+    fn postgres_index_queries_cast_attname_to_text() {
+        // Regression for #9988: `COALESCE(a.attname, pg_get_indexdef(...))` resolves to the
+        // `name` type, so PostgreSQL silently truncated an expression key part to 63 bytes
+        // (NAMEDATALEN - 1). The rebuilt CREATE INDEX then failed with a syntax error and the
+        // whole publish transaction rolled back.
+        for sql in [
+            POSTGRES_INDEXES_SQL,
+            POSTGRES_INDEXES_COMPAT_SQL,
+            postgres_indexes_for_relations_sql(),
+            postgres_indexes_for_relations_compat_sql(),
+        ] {
+            assert!(sql.contains("COALESCE(a.attname::text, pg_get_indexdef("), "{sql}");
+            assert!(!sql.contains("COALESCE(a.attname, pg_get_indexdef("), "{sql}");
         }
     }
 

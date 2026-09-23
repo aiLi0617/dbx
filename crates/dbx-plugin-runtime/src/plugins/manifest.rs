@@ -9,11 +9,12 @@ pub const SUPPORTED_PLUGIN_MANIFEST_VERSION: u32 = 1;
 ///
 /// 1.1 adds the plugin-initiated `host/requestUserInput` method (see
 /// `plugins/runtime.rs`). 1.2 adds the plugin-initiated plan Host API
-/// (`host.getPlanCapabilities` / `host.explainPlan`). Both are additive: older
-/// plugins keep working, and a plugin that wants either capability must check
-/// the advertised version (or the matching `capabilities` / `host.features`
+/// (`host.getPlanCapabilities` / `host.explainPlan`). 1.3 adds read-only table
+/// schema metadata (`host.getTableMetadata`). All are additive: older plugins
+/// keep working, and a plugin that wants either capability must check the
+/// advertised version (or the matching `capabilities` / `host.features`
 /// entry) before calling it.
-pub const SUPPORTED_PLUGIN_HOST_API_VERSION: &str = "1.2.0";
+pub const SUPPORTED_PLUGIN_HOST_API_VERSION: &str = "1.3.0";
 /// Capabilities the host advertises to a plugin backend at `plugin/initialize`.
 pub const SUPPORTED_PLUGIN_HOST_FEATURES: &[&str] = &["host.requestUserInput"];
 pub const SUPPORTED_PLUGIN_PROTOCOL_VERSION: u32 = 1;
@@ -21,8 +22,16 @@ pub const PLUGIN_CONNECTION_TEST_METHOD: &str = "connection/test";
 pub const PLUGIN_CONNECTION_CONNECT_METHOD: &str = "connection/connect";
 pub const PLUGIN_CONNECTION_DISCONNECT_METHOD: &str = "connection/disconnect";
 pub const PLUGIN_CONNECTION_ACTION_METHOD: &str = "connection/action";
-pub const SUPPORTED_PLUGIN_PERMISSIONS: &[&str] =
-    &["host.events", "host.binary", "host.workbench", "host.filesystem", "host.plans:read", "host.storage"];
+pub const SUPPORTED_PLUGIN_PERMISSIONS: &[&str] = &[
+    "host.events",
+    "host.binary",
+    "host.workbench",
+    "host.filesystem",
+    "host.plans:read",
+    "host.schema:read",
+    "host.storage",
+    "host.ai",
+];
 
 /// Cap the number of `host.network:<origin>` entries so a manifest cannot bloat
 /// the sandbox CSP or enumerate large origin lists.
@@ -648,8 +657,8 @@ pub struct PluginWorkbenchContribution {
 }
 
 /// Native context-menu entry contributed to DBX surfaces. v1 targets the
-/// saved-connection sidebar menu; clicks are dispatched to the plugin backend
-/// as `contextMenu/<id>` requests.
+/// saved-connection and table sidebar menus; clicks are dispatched to the
+/// plugin backend as `contextMenu/<id>` requests.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginContextMenuContribution {
@@ -659,7 +668,7 @@ pub struct PluginContextMenuContribution {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
-    /// Menu surface the item belongs to; currently only `connection`.
+    /// Menu surface the item belongs to: `connection` or `table`.
     #[serde(default)]
     pub menu: String,
 }
@@ -1130,9 +1139,9 @@ fn validate_contributions(
             PluginContribution::ContextMenu(menu) => {
                 validate_required_text(&menu.label, &format!("Context menu '{id}' label"), errors);
                 validate_declared_icon(plugin_dir, &format!("Context menu '{id}' icon"), menu.icon.as_deref(), errors);
-                if menu.menu != "connection" {
+                if menu.menu != "connection" && menu.menu != "table" {
                     errors.push(format!(
-                        "Context menu '{id}' declares unsupported menu '{}'; only 'connection' is available",
+                        "Context menu '{id}' declares unsupported menu '{}'; only 'connection' and 'table' are available",
                         menu.menu
                     ));
                 }
@@ -1488,6 +1497,30 @@ mod tests {
         PluginManifest, SUPPORTED_PLUGIN_HOST_API_VERSION, SUPPORTED_PLUGIN_PERMISSIONS,
     };
 
+    fn context_menu_manifest(menu: &str) -> (tempfile::TempDir, PluginManifest) {
+        let dir = tempfile::tempdir().unwrap();
+        let executable = dir.path().join("bin").join("example");
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::write(&executable, b"example").unwrap();
+        let manifest = serde_json::from_value(serde_json::json!({
+            "manifest_version": 1,
+            "id": "io.dbx.example",
+            "name": "Example",
+            "version": "1.0.0",
+            "publisher": "example",
+            "engines": { "dbx": ">=0.1.0", "host_api": "^1.0" },
+            "entrypoints": { "backend": { "executable": "bin/example" } },
+            "contributions": [{
+                "type": "context-menu",
+                "id": "io.dbx.example.inspect",
+                "label": "Inspect",
+                "menu": menu
+            }]
+        }))
+        .unwrap();
+        (dir, manifest)
+    }
+
     #[test]
     fn connection_provider_proxy_route_defaults_false_and_parses() {
         let provider: PluginConnectionProviderContribution = serde_json::from_value(serde_json::json!({
@@ -1548,7 +1581,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_host_plans_read_and_still_rejects_unknown_permissions() {
+    fn accepts_read_only_host_permissions_and_still_rejects_unknown_permissions() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("ui")).unwrap();
         std::fs::write(dir.path().join("ui").join("index.html"), "<!doctype html>").unwrap();
@@ -1561,14 +1594,22 @@ mod tests {
             "publisher": "example",
             "engines": { "dbx": ">=0.1.0", "host_api": "^1.0" },
             "entrypoints": { "ui": { "root": "ui", "entry": "ui/index.html" } },
-            "permissions": ["host.plans:read"]
+            "permissions": ["host.plans:read", "host.schema:read"]
         }))
         .unwrap();
         let compatibility = manifest.compatibility(dir.path(), "0.1.0");
         assert!(compatibility.compatible, "{:?}", compatibility.errors);
 
-        // The plan API is read-only: an execute-scoped scope must not be declared.
-        for permission in ["host.plans:execute", "host.plans", "host.plans:read:all", "host.plan:read"] {
+        // Both the plan and schema metadata APIs are read-only; execute/write
+        // scopes must not be declared as substitutes.
+        for permission in [
+            "host.plans:execute",
+            "host.plans",
+            "host.plans:read:all",
+            "host.plan:read",
+            "host.schema:write",
+            "host.schema",
+        ] {
             let manifest: PluginManifest = serde_json::from_value(serde_json::json!({
                 "manifest_version": 1,
                 "id": "io.dbx.example",
@@ -1611,22 +1652,22 @@ mod tests {
         assert_eq!(declared, SUPPORTED_PLUGIN_PERMISSIONS.iter().map(|value| value.to_string()).collect::<Vec<_>>());
     }
 
-    /// The reason for the 1.2.0 bump: `engines.host_api` is how a plugin states
-    /// "I need the plan API", so the advertised version has to satisfy `^1.2`
-    /// while a floor this host cannot meet stays rejected.
+    /// The reason for the 1.3.0 bump: `engines.host_api` is how a plugin states
+    /// "I need the schema metadata API", so the advertised version has to
+    /// satisfy `^1.3` while a floor this host cannot meet stays rejected.
     #[test]
-    fn host_api_advertises_the_floor_a_plan_api_plugin_declares() {
+    fn host_api_advertises_the_floor_a_schema_metadata_plugin_declares() {
         let advertised = semver::Version::parse(SUPPORTED_PLUGIN_HOST_API_VERSION)
             .expect("the advertised Host API version must be semver");
         assert!(
-            semver::VersionReq::parse("^1.2").unwrap().matches(&advertised),
-            "the host must satisfy the plan API floor it asks plugins to declare"
+            semver::VersionReq::parse("^1.3").unwrap().matches(&advertised),
+            "the host must satisfy the schema metadata API floor it asks plugins to declare"
         );
 
-        for requirement in ["^1.0", "^1.1", "^1.2", ">=1.1.0, <2.0.0"] {
+        for requirement in ["^1.0", "^1.1", "^1.2", "^1.3", ">=1.1.0, <2.0.0"] {
             assert!(host_api_requirement_errors(requirement).is_empty(), "{requirement} must be satisfiable");
         }
-        for requirement in [">=1.3.0", "^2.0"] {
+        for requirement in [">=1.4.0", "^2.0"] {
             assert!(!host_api_requirement_errors(requirement).is_empty(), "{requirement} must be rejected");
         }
     }
@@ -1649,6 +1690,43 @@ mod tests {
         }))
         .unwrap();
         manifest.compatibility(dir.path(), "0.1.0").errors
+    }
+
+    #[test]
+    fn accepts_connection_and_table_context_menu_targets() {
+        for menu in ["connection", "table"] {
+            let (dir, manifest) = context_menu_manifest(menu);
+            let compatibility = manifest.compatibility(dir.path(), "0.1.0");
+            assert!(compatibility.compatible, "{menu}: {:?}", compatibility.errors);
+        }
+    }
+
+    #[test]
+    fn rejects_unsupported_context_menu_targets() {
+        let (dir, manifest) = context_menu_manifest("schema");
+        let compatibility = manifest.compatibility(dir.path(), "0.1.0");
+        assert!(!compatibility.compatible);
+        assert!(compatibility.errors.iter().any(|error| {
+            error == "Context menu 'io.dbx.example.inspect' declares unsupported menu 'schema'; only 'connection' and 'table' are available"
+        }));
+    }
+
+    #[test]
+    fn manifest_schema_context_menu_enum_matches_runtime_targets() {
+        let schema_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("plugins")
+            .join("manifest.schema.json");
+        let schema: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&schema_path).unwrap()).unwrap();
+        let declared = schema["$defs"]["contextMenuContribution"]["properties"]["menu"]["enum"]
+            .as_array()
+            .expect("contextMenuContribution.menu.enum must be an array")
+            .iter()
+            .map(|value| value.as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(declared, ["connection", "table"]);
     }
 
     #[test]
