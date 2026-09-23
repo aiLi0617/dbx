@@ -250,9 +250,7 @@ describe("queryStore localizePluginTabTitles", () => {
     renamedTab!.customTitle = true;
     const renamedTitleBefore = renamedTab!.title;
 
-    queryStore.localizePluginTabTitles((pluginId, contributionId, surface) =>
-      pluginId === "io.dbx.ssh" && contributionId === "workbench" && surface === "ui" ? "工作台" : undefined
-    );
+    queryStore.localizePluginTabTitles((pluginId, contributionId, surface) => (pluginId === "io.dbx.ssh" && contributionId === "workbench" && surface === "ui" ? "工作台" : undefined));
 
     const titles = Object.fromEntries(queryStore.tabs.map((tab) => [tab.id, tab.title]));
     expect(titles[bareId]).toBe("工作台");
@@ -271,9 +269,7 @@ describe("queryStore localizePluginTabTitles", () => {
     const freeId = queryStore.openPluginFilesystem("io.dbx.ssh", "ssh.files", { title: "Files", forceNew: true });
     const boundId = queryStore.openPluginFilesystem("io.dbx.ssh", "ssh.files", { title: "prod-server · SFTP", connectionId: "conn-1", forceNew: true });
 
-    queryStore.localizePluginTabTitles((pluginId, contributionId, surface) =>
-      pluginId === "io.dbx.ssh" && contributionId === "ssh.files" && surface === "filesystem" ? "文件" : undefined
-    );
+    queryStore.localizePluginTabTitles((pluginId, contributionId, surface) => (pluginId === "io.dbx.ssh" && contributionId === "ssh.files" && surface === "filesystem" ? "文件" : undefined));
 
     const titles = Object.fromEntries(queryStore.tabs.map((tab) => [tab.id, tab.title]));
     expect(titles[freeId]).toBe("文件");
