@@ -1,6 +1,7 @@
 import type { ConnectionConfig, DatabaseType } from "@/types/database";
 import { GAUSSDB_M_JDBC_DRIVER_PROFILE } from "@/lib/database/jdbcDialect";
 import { effectiveRedisDatabaseIndex } from "@/lib/redis/redisDatabaseIndex";
+import { normalizeJdbcProperties, quoteJdbcProperty, redactJdbcProperties } from "@/lib/connection/jdbcProperties";
 
 /**
  * Builds copy-ready connection strings (standard URL / JDBC URL / libpq DSN /
@@ -200,6 +201,8 @@ function buildUserInfo(config: ConnectionUrlCopyConfig, includePassword: boolean
 
 /** Mirrors the sidebar tooltip redaction so shared strings never leak secrets. */
 function redactConnectionStringSecrets(value: string): string {
+  const properties = value.match(/^(jdbc:sqlserver:\/\/[^;]*;)([\s\S]*)$/i) ?? value.match(/^(jdbc:teradata:\/\/[^/]*\/)([\s\S]*)$/i);
+  if (properties) return properties[1] + redactJdbcProperties(properties[2], /^jdbc:sqlserver:/i.test(value) ? "sqlserver" : "teradata");
   return value.replace(/(:\/\/[^/\s:@?#;]+):([^@\s/?#;]+)@/g, "$1:***@").replace(/([?&;](?:password|pwd|pass|token|secret|key)=)[^&;]*/gi, "$1***");
 }
 
@@ -281,12 +284,12 @@ function jdbcPrefixFor(config: ConnectionUrlCopyConfig): string | null {
   }
 }
 
-function jdbcCredentialParams(config: ConnectionUrlCopyConfig, withCredentials: boolean): string[] {
+function jdbcCredentialParams(config: ConnectionUrlCopyConfig, withCredentials: boolean, encode: (value: string) => string = encodeURIComponent): string[] {
   if (!withCredentials) return [];
   const params: string[] = [];
   const user = config.username?.trim() ?? "";
-  if (user) params.push(`user=${encodeCredential(user)}`);
-  if (config.password) params.push(`password=${encodeCredential(config.password)}`);
+  if (user) params.push(`user=${encode(user)}`);
+  if (config.password) params.push(`password=${encode(config.password)}`);
   return params;
 }
 
@@ -303,7 +306,15 @@ function buildSpecialJdbcUrl(config: ConnectionUrlCopyConfig, database: string, 
   switch (config.db_type) {
     case "sqlserver": {
       const portPart = shouldAppendPort(config) ? `:${config.port}` : "";
-      const props = joinNonEmpty(";", [database && `databaseName=${database}`, ...credentials, rawParams.replace(/^[?&]+/, "").replace(/&/g, ";"), config.ssl && !queryHasParam(rawParams, ["encrypt"]) && "encrypt=true"]);
+      const sqlCredentials = jdbcCredentialParams(config, withCredentials, (value) => quoteJdbcProperty(value, "sqlserver"));
+      const params = normalizeJdbcProperties(rawParams, "sqlserver");
+      if (!params) return null;
+      const props = joinNonEmpty(";", [
+        database && `databaseName=${quoteJdbcProperty(database, "sqlserver")}`,
+        ...sqlCredentials,
+        ...params.map(({ key, value }) => `${key}=${quoteJdbcProperty(value, "sqlserver")}`),
+        config.ssl && !params.some(({ key }) => key.toLowerCase() === "encrypt") && "encrypt=true",
+      ]);
       return `jdbc:sqlserver://${formatHostForUrl(host)}${portPart}${props ? `;${props}` : ""}`;
     }
     case "oracle": {
@@ -325,7 +336,14 @@ function buildSpecialJdbcUrl(config: ConnectionUrlCopyConfig, database: string, 
       return `jdbc:sap://${formatHostForUrl(host)}${portPart}/${query ? `?${query}` : ""}`;
     }
     case "teradata": {
-      const props = joinNonEmpty(",", [Number(config.port) > 0 && `DBS_PORT=${config.port}`, database && `DATABASE=${database}`, ...credentials, rawParams.replace(/^[?&]+/, "").replace(/[;&]/g, ",")]);
+      const teraCredentials = jdbcCredentialParams(config, withCredentials, (value) => quoteJdbcProperty(value, "teradata"));
+      const params = normalizeJdbcProperties(rawParams, "teradata");
+      if (!params) return null;
+      // Teradata 20.00.00.56 unescapes before stripping boundary quotes.
+      // Do not offer generated URLs that silently change a property value.
+      const values = [database, ...params.map(({ value }) => value), ...(withCredentials ? [config.username ?? "", config.password ?? ""] : [])];
+      if (values.some((value) => value.startsWith("'") || value.endsWith("'"))) return null;
+      const props = joinNonEmpty(",", [Number(config.port) > 0 && `DBS_PORT=${config.port}`, database && `DATABASE=${quoteJdbcProperty(database, "teradata")}`, ...teraCredentials, ...params.map(({ key, value }) => `${key}=${quoteJdbcProperty(value, "teradata")}`)]);
       return `jdbc:teradata://${formatHostForUrl(host)}${props ? `/${props}` : ""}`;
     }
     case "exasol": {
@@ -354,7 +372,9 @@ function buildSpecialJdbcUrl(config: ConnectionUrlCopyConfig, database: string, 
 
 function jdbcQuery(config: ConnectionUrlCopyConfig, prefix: string, withCredentials: boolean): string {
   const raw = (config.url_params ?? "").trim().replace(/^[?&]+/, "");
-  const parts = [...jdbcCredentialParams(config, withCredentials)];
+  // Strict encoding is enabled only for verified query-style drivers.
+  const encode = prefix === "jdbc:mysql" || prefix === "jdbc:postgresql" ? encodeCredential : encodeURIComponent;
+  const parts = [...jdbcCredentialParams(config, withCredentials, encode)];
   if (raw) parts.push(raw);
   if (config.ssl) {
     if (PG_JDBC_PREFIXES.has(prefix) && !queryHasParam(raw, ["ssl", "sslmode"])) {
@@ -446,7 +466,9 @@ function buildPsqlCommand(config: ConnectionUrlCopyConfig, options: ConnectionUr
 function hasCopyableSecret(config: ConnectionUrlCopyConfig): boolean {
   if (config.password) return true;
   const explicit = explicitConnectionString(config);
-  return !!explicit && redactConnectionStringSecrets(explicit) !== explicit;
+  if (explicit && redactConnectionStringSecrets(explicit) !== explicit) return true;
+  const jdbc = buildJdbcUrl(config, { withCredentials: true });
+  return !!jdbc && redactConnectionStringSecrets(jdbc) !== jdbc;
 }
 
 /**
@@ -461,11 +483,11 @@ export function connectionUrlCopyFormats(config: ConnectionUrlCopyConfig | undef
   const candidate = config as ConnectionUrlCopyConfig;
   const formats: ConnectionUrlCopyFormat[] = [];
   const hasSecret = hasCopyableSecret(candidate);
-  const url = buildStandardUrl(candidate, { includePassword: false });
+  const url = redactCopy(buildStandardUrl(candidate, { includePassword: false }));
   const urlWithPassword = buildStandardUrl(candidate, { includePassword: true });
   if (url) formats.push("url");
   if (urlWithPassword && hasSecret && urlWithPassword !== url) formats.push("urlWithPassword");
-  const jdbcUrl = buildJdbcUrl(candidate, { withCredentials: false });
+  const jdbcUrl = redactCopy(buildJdbcUrl(candidate, { withCredentials: false }));
   const jdbcUrlWithCredentials = buildJdbcUrl(candidate, { withCredentials: true });
   if (jdbcUrl && jdbcUrl !== url) formats.push("jdbcUrl");
   // Without a secret the "with credentials" URL would only add `user=` (or
@@ -487,11 +509,11 @@ export function buildConnectionUrlCopy(config: ConnectionUrlCopyConfig | undefin
   const candidate = config as ConnectionUrlCopyConfig;
   switch (format) {
     case "url":
-      return buildStandardUrl(candidate, { ...options, includePassword: false });
+      return redactCopy(buildStandardUrl(candidate, { ...options, includePassword: false }));
     case "urlWithPassword":
       return buildStandardUrl(candidate, { ...options, includePassword: true });
     case "jdbcUrl":
-      return buildJdbcUrl(candidate, { ...options, withCredentials: false });
+      return redactCopy(buildJdbcUrl(candidate, { ...options, withCredentials: false }));
     case "jdbcUrlWithCredentials":
       return buildJdbcUrl(candidate, { ...options, withCredentials: true });
     case "hostPort":
@@ -505,4 +527,8 @@ export function buildConnectionUrlCopy(config: ConnectionUrlCopyConfig | undefin
     default:
       return null;
   }
+}
+
+function redactCopy(value: string | null): string | null {
+  return value === null ? null : redactConnectionStringSecrets(value);
 }

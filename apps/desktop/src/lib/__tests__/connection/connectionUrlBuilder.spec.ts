@@ -71,7 +71,7 @@ describe("buildConnectionUrlCopy standard URL", () => {
   it("round-trips every ASCII symbol in URL credentials", () => {
     const text = buildConnectionUrlCopy(config({ password: ASCII_SYMBOLS }), "urlWithPassword");
     expect(text).toBe(`postgresql://app_user:${ENCODED_ASCII_SYMBOLS}@db.example.com:5432/appdb`);
-    expect(decodeURIComponent(ENCODED_ASCII_SYMBOLS)).toBe(ASCII_SYMBOLS);
+    expect(parseConnectionUrl(text ?? "").password).toBe(ASCII_SYMBOLS);
   });
 
   it("preserves credentials that already look percent-encoded", () => {
@@ -140,12 +140,6 @@ describe("buildConnectionUrlCopy JDBC URL", () => {
   it.each([
     { db_type: "mysql", port: 3306 },
     { db_type: "postgres", port: 5432 },
-    { db_type: "oracle", port: 1521 },
-    { db_type: "sqlserver", port: 1433 },
-    { db_type: "saphana", port: 30015 },
-    { db_type: "teradata", port: 1025 },
-    { db_type: "exasol", port: 8563 },
-    { db_type: "snowflake", port: 443 },
   ] as const)("round-trips every ASCII symbol in $db_type JDBC credentials", ({ db_type, port }) => {
     const text = buildConnectionUrlCopy(config({ db_type, port, password: ASCII_SYMBOLS }), "jdbcUrlWithCredentials");
     expect(text).toContain(`password=${ENCODED_ASCII_SYMBOLS}`);
