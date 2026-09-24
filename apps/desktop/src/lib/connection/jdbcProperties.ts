@@ -16,7 +16,7 @@ interface JdbcPropertyParseOptions {
   allowBare?: boolean;
 }
 
-const SECRET_CONNECTION_PROPERTY = /^(?:password|pwd|pass|token|secret|key|accessToken|logdata|new_password|ssltruststore_password|sslpassword|oauth_client_secret|clientKeyPassword|keyStoreSecret|trustStorePassword)$/i;
+const SECRET_CONNECTION_PROPERTY = /^(?:password|pwd|pass|passcode|passphrase|token|secret|key|apikey|api_key|accessToken|access_token|logdata|new_password|ssltruststore_password|sslpassword|oauth_client_secret|client_secret|clientKeyPassword|keyStoreSecret|trustStorePassword)$/i;
 
 export function isSecretConnectionProperty(key: string): boolean {
   const rawKey = key.trim();

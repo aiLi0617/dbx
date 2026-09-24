@@ -7,6 +7,13 @@ describe("shared connection string redaction", () => {
     ["jdbc:mysql://db.example.com/app?pass%77ord=synthetic-secret&connectTimeout=5000", "jdbc:mysql://db.example.com/app?pass%77ord=***&connectTimeout=5000"],
     ["postgresql://db.example.com/app?sslpassword=key-secret&oauth_client_secret=client-secret", "postgresql://db.example.com/app?sslpassword=***&oauth_client_secret=***"],
     ["jdbc:sqlserver://db.example.com;password={head;tail};encrypt=true", "jdbc:sqlserver://db.example.com;password=***;encrypt=true"],
+    ["postgresql://db.example.com/app?passcode=synthetic-secret&role=analyst", "postgresql://db.example.com/app?passcode=***&role=analyst"],
+    ["postgresql://db.example.com/app?apikey=synthetic-secret", "postgresql://db.example.com/app?apikey=***"],
+    ["postgresql://db.example.com/app?api_key=synthetic-secret", "postgresql://db.example.com/app?api_key=***"],
+    ["postgresql://db.example.com/app?api%5Fkey=synthetic-secret", "postgresql://db.example.com/app?api%5Fkey=***"],
+    ["postgresql://db.example.com/app?access_token=synthetic-secret", "postgresql://db.example.com/app?access_token=***"],
+    ["postgresql://db.example.com/app?client_secret=synthetic-secret", "postgresql://db.example.com/app?client_secret=***"],
+    ["postgresql://db.example.com/app?passphrase=synthetic-secret", "postgresql://db.example.com/app?passphrase=***"],
   ])("removes credentials from %s", (connectionString, expected) => {
     expect(redactConnectionStringSecrets(connectionString)).toBe(expected);
   });

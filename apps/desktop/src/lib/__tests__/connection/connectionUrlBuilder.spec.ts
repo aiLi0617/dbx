@@ -245,7 +245,7 @@ describe("buildConnectionUrlCopy host:port, DSN and psql", () => {
     expect(buildConnectionUrlCopy(config({ password: "" }), "dsnWithPassword")).toBe(buildConnectionUrlCopy(config({ password: "" }), "dsn"));
   });
 
-  it.each(["password", "pass%77ord", "sslpassword", "oauth_client_secret"])("redacts a %s supplied only through DSN parameters", (key) => {
+  it.each(["password", "pass%77ord", "sslpassword", "oauth_client_secret", "passcode", "apikey", "api_key", "access_token", "client_secret", "passphrase"])("redacts a %s supplied only through DSN parameters", (key) => {
     const postgres = config({ password: "", url_params: `application_name=svc&${key}=synthetic-secret&sslmode=require` });
     expect(buildConnectionUrlCopy(postgres, "dsn")).toBe(`host=db.example.com port=5432 user=app_user dbname=appdb application_name=svc ${key}=*** sslmode=require`);
     expect(buildConnectionUrlCopy(postgres, "dsnWithPassword")).toBe(`host=db.example.com port=5432 user=app_user dbname=appdb application_name=svc ${key}=synthetic-secret sslmode=require`);
